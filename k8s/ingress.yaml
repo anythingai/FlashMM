@@ -1,0 +1,216 @@
+# FlashMM Kubernetes Ingress Configuration
+# HTTP/HTTPS routing and TLS termination
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flashmm-ingress
+  namespace: flashmm
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: ingress
+    app.kubernetes.io/part-of: flashmm-platform
+  annotations:
+    # Nginx Ingress Controller annotations
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "4k"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-burst: "50"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options DENY;
+      add_header X-Content-Type-Options nosniff;
+      add_header X-XSS-Protection "1; mode=block";
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin";
+    
+    # Certificate management
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "http01"
+    
+    # CORS configuration
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://flashmm.com,https://app.flashmm.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+spec:
+  tls:
+    - hosts:
+        - api.flashmm.com
+      secretName: flashmm-api-tls
+  rules:
+    - host: api.flashmm.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flashmm-app
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: flashmm-app
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name: flashmm-app
+                port:
+                  number: 8000
+
+---
+# Monitoring Services Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flashmm-monitoring-ingress
+  namespace: flashmm-monitoring
+  labels:
+    app: monitoring
+    app.kubernetes.io/name: flashmm-monitoring
+    app.kubernetes.io/component: ingress
+    app.kubernetes.io/part-of: flashmm-platform
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # Basic authentication for monitoring endpoints
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: monitoring-auth
+    nginx.ingress.kubernetes.io/auth-realm: "FlashMM Monitoring - Authentication Required"
+    
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-Frame-Options SAMEORIGIN;
+      add_header X-Content-Type-Options nosniff;
+      add_header X-XSS-Protection "1; mode=block";
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+spec:
+  tls:
+    - hosts:
+        - grafana.flashmm.com
+        - prometheus.flashmm.com
+        - alertmanager.flashmm.com
+        - kibana.flashmm.com
+      secretName: flashmm-monitoring-tls
+  rules:
+    - host: grafana.flashmm.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flashmm-grafana
+                port:
+                  number: 3000
+    - host: prometheus.flashmm.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
+    - host: alertmanager.flashmm.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: alertmanager
+                port:
+                  number: 9093
+    - host: kibana.flashmm.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kibana
+                port:
+                  number: 5601
+
+---
+# Certificate Issuer for Let's Encrypt
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: issuer
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@flashmm.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+
+---
+# Certificate Issuer for Let's Encrypt Staging
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app.kubernetes.io/name: cert-manager
+    app.kubernetes.io/component: issuer
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@flashmm.com
+    privateKeySecretRef:
+      name: letsencrypt-staging
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+
+---
+# Basic Auth Secret for Monitoring
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monitoring-auth
+  namespace: flashmm-monitoring
+  labels:
+    app: monitoring
+    app.kubernetes.io/name: monitoring-auth
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+type: Opaque
+data:
+  # admin:$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W (password: admin)
+  # Change this in production!
+  auth: YWRtaW46JDJhJDEwJDJiMmNVOENQaE9UYUdyczFIUlF1QXVlUzdKVFQ1WkhzSFN6WWlGUG0xbGVaY2s3TWM4VDRXCg==

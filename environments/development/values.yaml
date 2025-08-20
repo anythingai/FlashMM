@@ -1,0 +1,190 @@
+# FlashMM Development Environment Configuration
+# Optimized for local development and testing
+
+global:
+  environment: development
+  domain: "dev.flashmm.local"
+  imageRegistry: "ghcr.io"
+  imageTag: "dev"
+  
+# Application Configuration
+flashmm:
+  replicaCount: 1
+  
+  image:
+    repository: "ghcr.io/flashmm/flashmm"
+    tag: "dev"
+    pullPolicy: "Always"
+  
+  config:
+    debug: true
+    logLevel: "DEBUG"
+    trading:
+      enabled: false  # Disable trading in dev
+      maxPositionUSDC: 100.0
+      quoteFrequencyHz: 1.0
+    ml:
+      confidenceThreshold: 0.5
+      inferenceTimeoutMs: 10
+  
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  
+  autoscaling:
+    enabled: false
+  
+  podDisruptionBudget:
+    enabled: false
+
+# Database Configuration
+postgresql:
+  enabled: true
+  architecture: "standalone"
+  auth:
+    database: "flashmm_dev"
+    username: "flashmm"
+  primary:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    persistence:
+      enabled: true
+      size: "10Gi"
+  readReplicas:
+    replicaCount: 0
+  metrics:
+    enabled: false
+
+# Redis Configuration
+redis:
+  enabled: true
+  architecture: "standalone"
+  auth:
+    enabled: false  # Disabled for dev convenience
+  master:
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "50m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+    persistence:
+      enabled: false  # Use in-memory for dev
+  replica:
+    replicaCount: 0
+  metrics:
+    enabled: false
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    server:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "100m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"
+      persistence:
+        enabled: false
+        size: "10Gi"
+      retention: "7d"
+    alertmanager:
+      enabled: false
+  
+  grafana:
+    enabled: true
+    admin:
+      username: "admin"
+      password: "dev_admin_123"
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "50m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+    persistence:
+      enabled: false
+
+# Logging Configuration
+logging:
+  enabled: false  # Disabled in dev to save resources
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  
+  hosts:
+    - host: "api.dev.flashmm.local"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-app"
+          port: 8000
+    - host: "grafana.dev.flashmm.local"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-grafana"
+          port: 3000
+  
+  tls:
+    enabled: false  # Use HTTP in dev
+  
+  certManager:
+    enabled: false
+
+# Security Configuration
+security:
+  podSecurityPolicy:
+    enabled: false
+  networkPolicy:
+    enabled: false
+  rbac:
+    enabled: true
+
+# Backup Configuration
+backup:
+  enabled: false
+
+# External Dependencies
+external:
+  sei:
+    network: "testnet"
+    rpcUrl: "https://sei-testnet-rpc.polkachu.com"
+  cambrian:
+    baseUrl: "https://api-testnet.cambrian.com"
+  azure:
+    openai:
+      endpoint: "https://dev-openai.openai.azure.com/"
+
+# Feature Flags
+features:
+  enableServiceMesh: false
+  enableAutoScaling: false
+  enableNetworkPolicies: false
+  enablePodSecurityPolicies: false
+  enableSpotInstances: false
+
+# Development Tools
+devTools:
+  enabled: true
+  hotReload: true
+  debugMode: true
+  mockExternalAPIs: true

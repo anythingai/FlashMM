@@ -1,0 +1,322 @@
+# FlashMM Kubernetes RBAC Configuration
+# Role-Based Access Control for secure cluster operations
+
+# Service Account for FlashMM Application
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flashmm
+  namespace: flashmm
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: serviceaccount
+    app.kubernetes.io/part-of: flashmm-platform
+automountServiceAccountToken: true
+
+---
+# Service Account for Prometheus
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: flashmm-monitoring
+  labels:
+    app: prometheus
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: serviceaccount
+    app.kubernetes.io/part-of: flashmm-platform
+automountServiceAccountToken: true
+
+---
+# Service Account for Backup Jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup
+  namespace: flashmm-system
+  labels:
+    app: backup
+    app.kubernetes.io/name: backup
+    app.kubernetes.io/component: serviceaccount
+    app.kubernetes.io/part-of: flashmm-platform
+automountServiceAccountToken: true
+
+---
+# Role for FlashMM Application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: flashmm
+  name: flashmm-role
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+rules:
+  # Allow reading ConfigMaps and Secrets
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading own Pod information
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Allow creating events for logging
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Allow accessing Services for service discovery
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding for FlashMM Application
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flashmm-rolebinding
+  namespace: flashmm
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+subjects:
+  - kind: ServiceAccount
+    name: flashmm
+    namespace: flashmm
+roleRef:
+  kind: Role
+  name: flashmm-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRole for Prometheus (needs cluster-wide access for monitoring)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-clusterrole
+  labels:
+    app: prometheus
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+rules:
+  # Allow reading all pods, services, endpoints for service discovery
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading configuration
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  # Allow reading ingresses for discovery
+  - apiGroups: ["networking.k8s.io", "extensions"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading node metrics
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+# ClusterRoleBinding for Prometheus
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-clusterrolebinding
+  labels:
+    app: prometheus
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: flashmm-monitoring
+roleRef:
+  kind: ClusterRole
+  name: prometheus-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role for Backup Operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: flashmm-system
+  name: backup-role
+  labels:
+    app: backup
+    app.kubernetes.io/name: backup
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+rules:
+  # Allow accessing secrets for backup credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  # Allow creating/managing backup jobs
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "create", "update", "patch", "watch"]
+  # Allow accessing persistent volumes for backups
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ClusterRole for cross-namespace backup operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backup-clusterrole
+  labels:
+    app: backup
+    app.kubernetes.io/name: backup
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+rules:
+  # Allow reading pods and services across namespaces for backup discovery
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch"]
+  # Allow accessing persistent volumes
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  # Allow creating volume snapshots
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots", "volumesnapshotcontents"]
+    verbs: ["get", "list", "create", "delete"]
+
+---
+# RoleBinding for Backup in system namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-rolebinding
+  namespace: flashmm-system
+  labels:
+    app: backup
+    app.kubernetes.io/name: backup
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+subjects:
+  - kind: ServiceAccount
+    name: backup
+    namespace: flashmm-system
+roleRef:
+  kind: Role
+  name: backup-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding for Backup
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backup-clusterrolebinding
+  labels:
+    app: backup
+    app.kubernetes.io/name: backup
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: flashmm-platform
+subjects:
+  - kind: ServiceAccount
+    name: backup
+    namespace: flashmm-system
+roleRef:
+  kind: ClusterRole
+  name: backup-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Pod Security Policy (if PSP is enabled)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: flashmm-psp
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 10001
+        max: 65535
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 10001
+        max: 65535
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 10001
+        max: 65535
+  readOnlyRootFilesystem: true
+
+---
+# ClusterRole for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flashmm-psp-clusterrole
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+rules:
+  - apiGroups: ['policy']
+    resources: ['podsecuritypolicies']
+    verbs: ['use']
+    resourceNames:
+      - flashmm-psp
+
+---
+# ClusterRoleBinding for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flashmm-psp-clusterrolebinding
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+subjects:
+  - kind: ServiceAccount
+    name: flashmm
+    namespace: flashmm
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: flashmm-monitoring
+  - kind: ServiceAccount
+    name: backup
+    namespace: flashmm-system
+roleRef:
+  kind: ClusterRole
+  name: flashmm-psp-clusterrole
+  apiGroup: rbac.authorization.k8s.io

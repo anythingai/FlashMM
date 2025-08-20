@@ -1,0 +1,362 @@
+# FlashMM Staging Environment Configuration
+# Production-like environment for pre-deployment testing
+
+global:
+  environment: staging
+  domain: "staging.flashmm.com"
+  imageRegistry: "ghcr.io"
+  imageTag: "staging"
+  
+# Application Configuration
+flashmm:
+  replicaCount: 2
+  
+  image:
+    repository: "ghcr.io/flashmm/flashmm"
+    tag: "staging"
+    pullPolicy: "Always"
+  
+  config:
+    debug: false
+    logLevel: "INFO"
+    trading:
+      enabled: true
+      maxPositionUSDC: 1000.0
+      quoteFrequencyHz: 5.0
+      maxQuoteLevels: 3
+      spreadBufferBps: 5.0
+    ml:
+      confidenceThreshold: 0.6
+      inferenceTimeoutMs: 5
+  
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+  
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# Database Configuration
+postgresql:
+  enabled: true
+  architecture: "replication"
+  auth:
+    database: "flashmm_staging"
+    username: "flashmm"
+  primary:
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    persistence:
+      enabled: true
+      size: "50Gi"
+      storageClass: "fast-ssd"
+  readReplicas:
+    replicaCount: 1
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# Redis Configuration
+redis:
+  enabled: true
+  architecture: "replication"
+  auth:
+    enabled: true
+  master:
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+    persistence:
+      enabled: true
+      size: "10Gi"
+      storageClass: "fast-ssd"
+  replica:
+    replicaCount: 1
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+# InfluxDB Configuration
+influxdb:
+  enabled: true
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "250m"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+  persistence:
+    enabled: true
+    size: "100Gi"
+    storageClass: "fast-ssd"
+  config:
+    retention: "30d"
+
+# Monitoring Configuration
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    server:
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "500m"
+        limits:
+          memory: "2Gi"
+          cpu: "1"
+      persistence:
+        enabled: true
+        size: "50Gi"
+        storageClass: "fast-ssd"
+      retention: "30d"
+    
+    alertmanager:
+      enabled: true
+      resources:
+        requests:
+          memory: "128Mi"
+          cpu: "100m"
+        limits:
+          memory: "256Mi"
+          cpu: "200m"
+      persistence:
+        enabled: true
+        size: "5Gi"
+  
+  grafana:
+    enabled: true
+    admin:
+      username: "admin"
+      # Password should be set via secrets
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "500m"
+    persistence:
+      enabled: true
+      size: "10Gi"
+    
+    dashboards:
+      enabled: true
+    datasources:
+      enabled: true
+
+# Logging Configuration
+logging:
+  enabled: true
+  
+  elasticsearch:
+    enabled: true
+    replicas: 1
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    persistence:
+      enabled: true
+      size: "50Gi"
+      storageClass: "fast-ssd"
+  
+  kibana:
+    enabled: true
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  
+  logstash:
+    enabled: true
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+
+# Ingress Configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  
+  nginx:
+    enabled: true
+    controller:
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+  
+  certManager:
+    enabled: true
+    issuer: "letsencrypt-staging"
+    email: "ops@flashmm.com"
+  
+  hosts:
+    - host: "api.staging.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-app"
+          port: 8000
+    - host: "grafana.staging.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-grafana"
+          port: 3000
+    - host: "prometheus.staging.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "prometheus"
+          port: 9090
+    - host: "kibana.staging.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "kibana"
+          port: 5601
+  
+  tls:
+    enabled: true
+    secretName: "flashmm-staging-tls"
+
+# Security Configuration
+security:
+  podSecurityPolicy:
+    enabled: true
+  networkPolicy:
+    enabled: true
+    ingress:
+      enabled: true
+    egress:
+      enabled: true
+  rbac:
+    enabled: true
+
+# Backup Configuration
+backup:
+  enabled: true
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  retention: "15d"
+  
+  s3:
+    bucket: "flashmm-staging-backups"
+    region: "us-east-1"
+
+# External Dependencies
+external:
+  sei:
+    network: "testnet"
+    rpcUrl: "https://sei-testnet-rpc.polkachu.com"
+    wsUrl: "wss://sei-testnet-rpc.polkachu.com/websocket"
+    chainId: "atlantic-2"
+  
+  cambrian:
+    baseUrl: "https://api-testnet.cambrian.com"
+  
+  azure:
+    openai:
+      endpoint: "https://staging-openai.openai.azure.com/"
+      apiVersion: "2023-12-01-preview"
+
+# Feature Flags
+features:
+  enableServiceMesh: false
+  enableAutoScaling: true
+  enableNetworkPolicies: true
+  enablePodSecurityPolicies: true
+  enableSpotInstances: false
+
+# Performance Configuration
+performance:
+  nodeAffinity:
+    enabled: true
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - matchExpressions:
+          - key: "node-type"
+            operator: In
+            values: ["high-performance"]
+  
+  tolerations:
+    enabled: true
+    tolerations:
+      - key: "high-performance"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+# Cost Optimization
+costOptimization:
+  enableSpotInstances: true
+  spotInstancePercentage: 30
+  
+  resourceQuotas:
+    enabled: true
+    limits:
+      "requests.cpu": "10"
+      "requests.memory": "20Gi"
+      "limits.cpu": "20"
+      "limits.memory": "40Gi"
+      "persistentvolumeclaims": "10"
+
+# Environment-specific Secrets
+secrets:
+  externalSecrets:
+    enabled: true
+    provider: "aws-secrets-manager"
+    region: "us-east-1"
+    secretStoreRef: "flashmm-staging-secrets"

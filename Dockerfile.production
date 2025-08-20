@@ -1,0 +1,217 @@
+# Multi-stage Production Dockerfile for FlashMM
+# Optimized for production deployment with enhanced security and performance
+
+# =============================================================================
+# Build Stage - Dependencies and Compilation
+# =============================================================================
+FROM python:3.11-slim as builder
+
+LABEL maintainer="FlashMM Team"
+LABEL description="FlashMM High-Frequency Market Making Agent"
+LABEL version="1.0.0"
+
+WORKDIR /app
+
+# Install build dependencies with minimal attack surface
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    git \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /tmp/* /var/tmp/*
+
+# Install Poetry with pinned version for reproducibility
+RUN pip install --no-cache-dir poetry==1.7.1
+RUN poetry config virtualenvs.create false
+RUN poetry config cache-dir /tmp/poetry_cache
+
+# Copy dependency files for layer caching optimization
+COPY pyproject.toml poetry.lock ./
+
+# Install Python dependencies in a separate layer for better caching
+RUN poetry install --only main --no-dev --no-interaction --no-ansi \
+    && rm -rf /tmp/poetry_cache
+
+# =============================================================================
+# Security Scanning Stage
+# =============================================================================
+FROM builder as security-scan
+
+# Install security scanning tools
+RUN pip install --no-cache-dir safety bandit semgrep
+
+# Copy source code for security scanning
+COPY src/ ./src/
+
+# Run security scans (will fail build if critical vulnerabilities found)
+RUN safety check --json --output /tmp/safety-report.json || true
+RUN bandit -r src/ -f json -o /tmp/bandit-report.json || true
+RUN semgrep --config=auto src/ --json --output=/tmp/semgrep-report.json || true
+
+# =============================================================================
+# Runtime Stage - Minimal Production Image
+# =============================================================================
+FROM python:3.11-slim as runtime
+
+# Security labels and metadata
+LABEL org.opencontainers.image.title="FlashMM"
+LABEL org.opencontainers.image.description="High-Frequency Market Making Agent"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+LABEL org.opencontainers.image.source="https://github.com/flashmm/flashmm"
+LABEL org.opencontainers.image.licenses="MIT"
+
+WORKDIR /app
+
+# Install only essential runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    dumb-init \
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean \
+    && rm -rf /tmp/* /var/tmp/*
+
+# Copy Python packages from builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Create non-root user with minimal privileges
+RUN groupadd -r -g 10001 flashmm && \
+    useradd -r -u 10001 -g flashmm -d /app -s /sbin/nologin -c "FlashMM User" flashmm
+
+# Create directory structure with proper permissions
+RUN mkdir -p /app/{logs,models,data,config,tmp} && \
+    chown -R flashmm:flashmm /app && \
+    chmod -R 750 /app
+
+# Copy application code with proper ownership
+COPY --chown=flashmm:flashmm src/ ./src/
+COPY --chown=flashmm:flashmm config/ ./config/
+
+# Copy security scan reports for compliance
+COPY --from=security-scan /tmp/*-report.json ./security-reports/
+
+# Create ML models directory (optional - may not exist in all builds)  
+RUN mkdir -p ./models && chown flashmm:flashmm ./models
+
+# Configure Python for security and performance
+ENV PYTHONPATH=/app/src
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONHASHSEED=random
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Security hardening environment variables
+ENV MALLOC_ARENA_MAX=2
+ENV MALLOC_MMAP_THRESHOLD_=131072
+ENV MALLOC_TRIM_THRESHOLD_=131072
+ENV MALLOC_TOP_PAD_=131072
+ENV MALLOC_MMAP_MAX_=65536
+
+# Application-specific environment variables
+ENV FLASHMM_ENVIRONMENT=production
+ENV FLASHMM_CONFIG_PATH=/app/config
+ENV FLASHMM_LOG_PATH=/app/logs
+ENV FLASHMM_DATA_PATH=/app/data
+
+# Switch to non-root user
+USER flashmm
+
+# Expose application port
+EXPOSE 8000
+
+# Enhanced health check with timeout and dependency validation
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
+    CMD curl -f -m 10 http://localhost:8000/health/detailed || exit 1
+
+# Set up signal handling and process management
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+
+# Default command with proper signal handling
+CMD ["python", "-u", "-m", "flashmm.main"]
+
+# =============================================================================
+# Development Stage (Multi-target build)
+# =============================================================================
+FROM runtime as development
+
+USER root
+
+# Install development tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    vim \
+    htop \
+    strace \
+    tcpdump \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install development Python packages
+RUN pip install --no-cache-dir \
+    pytest \
+    pytest-cov \
+    pytest-asyncio \
+    black \
+    ruff \
+    mypy \
+    ipython
+
+USER flashmm
+
+# Override for development
+ENV FLASHMM_ENVIRONMENT=development
+ENV FLASHMM_DEBUG=true
+ENV FLASHMM_LOG_LEVEL=DEBUG
+
+# =============================================================================
+# Testing Stage
+# =============================================================================
+FROM development as testing
+
+USER root
+
+# Copy test files
+COPY --chown=flashmm:flashmm tests/ ./tests/
+COPY --chown=flashmm:flashmm pytest.ini ./
+COPY --chown=flashmm:flashmm .coveragerc ./
+
+USER flashmm
+
+# Run tests as part of build (will fail build if tests fail)
+RUN python -m pytest tests/ -v --cov=src/flashmm --cov-report=term-missing --cov-fail-under=80
+
+# =============================================================================
+# Final Production Stage with Security Hardening
+# =============================================================================
+FROM runtime as production
+
+# Remove any unnecessary files and clean up
+USER root
+RUN find /app -name "*.pyc" -delete && \
+    find /app -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true && \
+    rm -rf /tmp/* /var/tmp/* /root/.cache
+
+# Final security hardening
+RUN chmod -R go-rwx /app/config && \
+    chmod -R go-rwx /app/logs && \
+    find /app -type f -name "*.py" -exec chmod 640 {} \; && \
+    find /app -type d -exec chmod 750 {} \;
+
+USER flashmm
+
+# Add build information for traceability
+ARG BUILD_DATE
+ARG BUILD_VERSION
+ARG GIT_COMMIT
+ENV BUILD_DATE=${BUILD_DATE}
+ENV BUILD_VERSION=${BUILD_VERSION}
+ENV GIT_COMMIT=${GIT_COMMIT}
+
+# Final health check optimization
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1

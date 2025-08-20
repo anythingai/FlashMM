@@ -1,0 +1,150 @@
+# FlashMM Horizontal Pod Autoscaler
+# Automatic scaling based on CPU, memory, and custom metrics
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flashmm-app-hpa
+  namespace: flashmm
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flashmm-app
+  minReplicas: 3
+  maxReplicas: 10
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+      selectPolicy: Min
+  metrics:
+    # CPU-based scaling
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Memory-based scaling
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    # Custom metric: Trading volume (requests per second)
+    - type: Pods
+      pods:
+        metric:
+          name: trading_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "100"
+    # Custom metric: Market data processing latency
+    - type: Pods
+      pods:
+        metric:
+          name: market_data_latency_p95
+        target:
+          type: AverageValue
+          averageValue: "50m"  # 50ms
+
+---
+# Redis Master HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: redis-slave-hpa
+  namespace: flashmm
+  labels:
+    app: redis
+    role: slave
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flashmm-redis-slave
+  minReplicas: 1
+  maxReplicas: 3
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 85
+
+---
+# VerticalPodAutoscaler for FlashMM (requires VPA controller)
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: flashmm-app-vpa
+  namespace: flashmm
+  labels:
+    app: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flashmm-app
+  updatePolicy:
+    updateMode: "Auto"
+  resourcePolicy:
+    containerPolicies:
+      - containerName: flashmm
+        minAllowed:
+          cpu: 100m
+          memory: 256Mi
+        maxAllowed:
+          cpu: 4
+          memory: 8Gi
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits

@@ -1,0 +1,258 @@
+# FlashMM Development Environment Docker Compose
+# Optimized for local development with hot reloading and debugging capabilities
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # FlashMM Application - Development Mode
+  # =============================================================================
+  flashmm:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      target: development
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        BUILD_VERSION: ${BUILD_VERSION:-dev}
+        GIT_COMMIT: ${GIT_COMMIT:-$(git rev-parse HEAD)}
+    container_name: flashmm-dev
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:8000"
+      - "${DEBUG_PORT:-5678}:5678"  # Python debugger port
+    environment:
+      - ENVIRONMENT=development
+      - FLASHMM_DEBUG=true
+      - FLASHMM_LOG_LEVEL=DEBUG
+      - REDIS_URL=redis://redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - GRAFANA_URL=http://grafana:3000
+      - PYTHONPATH=/app/src
+      - WATCHFILES_FORCE_POLLING=true  # For file watching in containers
+    env_file:
+      - .env.dev
+      - .env.local
+    volumes:
+      # Source code for hot reloading
+      - ./src:/app/src:ro
+      - ./config:/app/config:ro
+      - ./tests:/app/tests:ro
+      # Persistent data
+      - dev_logs:/app/logs
+      - dev_data:/app/data
+      - dev_models:/app/models
+      # Development tools
+      - ~/.gitconfig:/home/flashmm/.gitconfig:ro
+      - ~/.ssh:/home/flashmm/.ssh:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - flashmm-dev
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.flashmm-dev.rule=Host(`flashmm.local`)"
+      - "traefik.http.services.flashmm-dev.loadbalancer.server.port=8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # =============================================================================
+  # Redis - Development Configuration
+  # =============================================================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: flashmm-redis-dev
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save 60 100
+      --loglevel notice
+    volumes:
+      - redis_dev_data:/data
+      - ./config/redis/redis-dev.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - flashmm-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "traefik.enable=false"
+
+  # =============================================================================
+  # InfluxDB - Development Configuration
+  # =============================================================================
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: flashmm-influxdb-dev
+    restart: unless-stopped
+    ports:
+      - "${INFLUXDB_PORT:-8086}:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD:-dev_password_123}
+      - DOCKER_INFLUXDB_INIT_ORG=flashmm-dev
+      - DOCKER_INFLUXDB_INIT_BUCKET=metrics
+      - DOCKER_INFLUXDB_INIT_RETENTION=7d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-dev_token_123}
+      - INFLUXD_LOG_LEVEL=info
+    volumes:
+      - influxdb_dev_data:/var/lib/influxdb2
+      - influxdb_dev_config:/etc/influxdb2
+      - ./config/influxdb/dev-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    networks:
+      - flashmm-dev
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.influxdb-dev.rule=Host(`influxdb.local`)"
+
+  # =============================================================================
+  # Grafana - Development Configuration
+  # =============================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: flashmm-grafana-dev
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-dev_admin_123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource,grafana-worldmap-panel
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+      - GF_LOG_LEVEL=info
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+    volumes:
+      - grafana_dev_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - flashmm-dev
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana-dev.rule=Host(`grafana.local`)"
+
+  # =============================================================================
+  # Development Tools and Utilities
+  # =============================================================================
+  
+  # Redis Commander - GUI for Redis
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: flashmm-redis-ui
+    restart: unless-stopped
+    ports:
+      - "${REDIS_UI_PORT:-8081}:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - flashmm-dev
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.redis-ui.rule=Host(`redis-ui.local`)"
+
+  # Mailhog - Email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: flashmm-mailhog
+    restart: unless-stopped
+    ports:
+      - "${MAILHOG_WEB_PORT:-8025}:8025"  # Web UI
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"  # SMTP
+    networks:
+      - flashmm-dev
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mailhog.rule=Host(`mailhog.local`)"
+
+  # Traefik - Reverse proxy for local development
+  traefik:
+    image: traefik:v3.0
+    container_name: flashmm-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "${TRAEFIK_DASHBOARD_PORT:-8080}:8080"  # Dashboard
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-dev@flashmm.local}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - flashmm-dev
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  redis_dev_data:
+    driver: local
+  influxdb_dev_data:
+    driver: local
+  influxdb_dev_config:
+    driver: local
+  grafana_dev_data:
+    driver: local
+  dev_logs:
+    driver: local
+  dev_data:
+    driver: local
+  dev_models:
+    driver: local
+  traefik_letsencrypt:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  flashmm-dev:
+    driver: bridge
+    name: flashmm-dev-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+    labels:
+      - "com.docker.compose.project=flashmm-dev"

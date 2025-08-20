@@ -1,0 +1,402 @@
+# FlashMM Network Security Policies
+# Kubernetes network segmentation and micro-segmentation
+
+# Default deny all ingress and egress for FlashMM namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+---
+# FlashMM Application Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flashmm-app-policy
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: flashmm
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow ingress from NGINX ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8000
+    
+    # Allow ingress from monitoring (Prometheus)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm-monitoring
+      ports:
+        - protocol: TCP
+          port: 8000  # Metrics endpoint
+    
+    # Allow ingress from same namespace (inter-pod communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: flashmm-platform
+      ports:
+        - protocol: TCP
+          port: 8000
+  
+  egress:
+    # Allow egress to databases within namespace
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    - to:
+        - podSelector:
+            matchLabels:
+              app: influxdb
+      ports:
+        - protocol: TCP
+          port: 8086
+    
+    # Allow egress to external APIs (Sei network, Cambrian)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS
+        - protocol: TCP
+          port: 80   # HTTP (for health checks)
+    
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Database Network Policy (PostgreSQL)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-policy
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Only allow connections from FlashMM app
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: flashmm
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # Allow monitoring from Prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm-monitoring
+      ports:
+        - protocol: TCP
+          port: 9187  # Postgres exporter
+  
+  egress:
+    # Allow replication between postgres instances
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+
+---
+# Redis Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-policy
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Only allow connections from FlashMM app
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: flashmm
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow monitoring from Prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm-monitoring
+      ports:
+        - protocol: TCP
+          port: 9121  # Redis exporter
+  
+  egress:
+    # Allow replication between redis instances
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+
+---
+# InfluxDB Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: influxdb-policy
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: influxdb
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: influxdb
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow connections from FlashMM app
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: flashmm
+      ports:
+        - protocol: TCP
+          port: 8086
+    
+    # Allow monitoring from Prometheus and Grafana
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm-monitoring
+      ports:
+        - protocol: TCP
+          port: 8086
+  
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+
+---
+# Monitoring Namespace Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-policy
+  namespace: flashmm-monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow ingress from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000  # Grafana
+        - protocol: TCP
+          port: 9090  # Prometheus
+        - protocol: TCP
+          port: 9093  # AlertManager
+        - protocol: TCP
+          port: 5601  # Kibana
+    
+    # Allow inter-monitoring communication
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9093
+        - protocol: TCP
+          port: 9200  # Elasticsearch
+        - protocol: TCP
+          port: 5601
+  
+  egress:
+    # Allow access to FlashMM namespace for scraping
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm
+      ports:
+        - protocol: TCP
+          port: 8000  # App metrics
+        - protocol: TCP
+          port: 6379  # Redis metrics
+        - protocol: TCP
+          port: 5432  # Postgres metrics
+        - protocol: TCP
+          port: 8086  # InfluxDB metrics
+    
+    # Allow access to Kubernetes API for service discovery
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    
+    # Allow external webhook notifications
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS webhooks (Slack, PagerDuty)
+        - protocol: TCP
+          port: 80   # HTTP webhooks
+
+---
+# Ingress Controller Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-policy
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  ingress:
+    # Allow all ingress traffic to ingress controller
+    - {}
+  
+  egress:
+    # Allow egress to FlashMM services
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm
+      ports:
+        - protocol: TCP
+          port: 8000
+    
+    # Allow egress to monitoring services
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: flashmm-monitoring
+      ports:
+        - protocol: TCP
+          port: 3000
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 9093
+        - protocol: TCP
+          port: 5601
+    
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53

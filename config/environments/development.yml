@@ -1,0 +1,35 @@
+# FlashMM Development Environment Configuration
+
+app:
+  debug: true
+  log_level: DEBUG
+
+trading:
+  enable_trading: false  # Safety default for development
+  max_position_usdc: 100.0
+  quote_frequency_hz: 1.0
+
+sei:
+  network: "testnet"
+  rpc_url: "https://sei-testnet-rpc.polkachu.com"
+  ws_url: "wss://sei-testnet-rpc.polkachu.com/websocket"
+  chain_id: "atlantic-2"
+
+storage:
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+  influxdb:
+    host: "localhost"
+    port: 8086
+    database: "flashmm_dev"
+
+monitoring:
+  grafana_enabled: false
+  twitter_enabled: false
+  metrics_collection_interval_seconds: 30
+
+security:
+  encryption_required: false
+  ip_whitelist_enabled: false

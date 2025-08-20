@@ -1,0 +1,346 @@
+# FlashMM AlertManager Configuration
+# Alert routing and notification management
+
+global:
+  # The smarthost and SMTP sender used for mail notifications.
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'alerts@flashmm.com'
+  smtp_auth_username: 'alerts@flashmm.com'
+  smtp_auth_password_file: '/etc/alertmanager/secrets/smtp_password'
+  
+  # Default notification settings
+  resolve_timeout: 5m
+  
+  # External URLs for linking back to Grafana and Prometheus
+  http_config:
+    proxy_url: ''
+    follow_redirects: true
+  
+# Templates for notifications
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# The directory from which notification templates are read.
+route:
+  # Default route - all alerts go here unless matched by a sub-route
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 5m
+  repeat_interval: 12h
+  receiver: 'default-receiver'
+  
+  routes:
+    # Critical alerts route to immediate notification channels
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 5m
+      routes:
+        # Trading-specific critical alerts
+        - match:
+            service: trading
+          receiver: 'trading-critical'
+          group_wait: 0s
+          repeat_interval: 2m
+        
+        # Infrastructure critical alerts
+        - match:
+            service: infrastructure
+          receiver: 'infrastructure-critical'
+          group_wait: 0s
+          repeat_interval: 5m
+    
+    # Warning alerts route with less aggressive timing
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 2h
+    
+    # Security alerts route to security team
+    - match:
+        team: security
+      receiver: 'security-alerts'
+      group_wait: 0s
+      repeat_interval: 10m
+    
+    # ML/AI model alerts
+    - match:
+        service: ml
+      receiver: 'ml-alerts'
+      group_wait: 1m
+      repeat_interval: 30m
+    
+    # Database alerts
+    - match_re:
+        service: 'database|cache'
+      receiver: 'database-alerts'
+      group_wait: 30s
+      repeat_interval: 15m
+    
+    # External API alerts
+    - match:
+        service: external-api
+      receiver: 'external-api-alerts'
+      group_wait: 2m
+      repeat_interval: 30m
+    
+    # Development environment alerts (less noisy)
+    - match:
+        environment: development
+      receiver: 'dev-alerts'
+      group_wait: 5m
+      repeat_interval: 4h
+    
+    # Staging environment alerts
+    - match:
+        environment: staging
+      receiver: 'staging-alerts'
+      group_wait: 2m
+      repeat_interval: 1h
+
+# Inhibition rules to prevent alert spam
+inhibit_rules:
+  # Inhibit any warning-level alerts if the same alert is firing at critical level
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'instance']
+  
+  # If FlashMM is down, don't alert on related metrics
+  - source_match:
+      alertname: 'FlashMMDown'
+    target_match_re:
+      alertname: 'FlashMM.*'
+    equal: ['instance']
+  
+  # If entire node is down, don't alert on pod-level issues
+  - source_match:
+      alertname: 'KubernetesNodeDown'
+    target_match_re:
+      alertname: 'KubernetesPod.*'
+    equal: ['instance']
+
+# Notification receivers
+receivers:
+  # Default catch-all receiver
+  - name: 'default-receiver'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#alerts'
+        title: '🔔 FlashMM Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Severity:* {{ .Labels.severity }}
+          *Environment:* {{ .Labels.environment }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        send_resolved: true
+  
+  # Critical alerts - multiple notification channels
+  - name: 'critical-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#critical-alerts'
+        title: '🚨 CRITICAL: FlashMM Alert'
+        text: |
+          <!channel>
+          {{ range .Alerts }}
+          *CRITICAL ALERT:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Environment:* {{ .Labels.environment }}
+          *Service:* {{ .Labels.service }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        send_resolved: true
+        title_link: 'https://grafana.flashmm.com'
+    
+    pagerduty_configs:
+      - routing_key_file: '/etc/alertmanager/secrets/pagerduty_key'
+        description: |
+          {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+        details:
+          environment: '{{ .GroupLabels.environment }}'
+          service: '{{ .GroupLabels.service }}'
+          severity: '{{ .GroupLabels.severity }}'
+    
+    email_configs:
+      - to: 'oncall@flashmm.com'
+        from: 'alerts@flashmm.com'
+        subject: '🚨 CRITICAL FlashMM Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          CRITICAL Alert Details:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Environment: {{ .Labels.environment }}
+          Service: {{ .Labels.service }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          
+          {{ if .Annotations.runbook_url }}
+          Runbook: {{ .Annotations.runbook_url }}
+          {{ end }}
+          
+          Grafana: https://grafana.flashmm.com
+          Prometheus: https://prometheus.flashmm.com
+          {{ end }}
+  
+  # Trading-specific critical alerts
+  - name: 'trading-critical'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#trading-alerts'
+        title: '💰 TRADING CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |
+          <!channel> TRADING SYSTEM ALERT
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Environment:* {{ .Labels.environment }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        send_resolved: true
+    
+    webhook_configs:
+      - url_file: '/etc/alertmanager/secrets/trading_webhook_url'
+        send_resolved: true
+  
+  # Infrastructure critical alerts
+  - name: 'infrastructure-critical'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#infrastructure-alerts'
+        title: '🏗️ INFRASTRUCTURE CRITICAL: {{ .GroupLabels.alertname }}'
+        text: |
+          <!here> Infrastructure Issue Detected
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Node/Instance:* {{ .Labels.instance }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        send_resolved: true
+  
+  # Warning level alerts
+  - name: 'warning-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#warnings'
+        title: '⚠️ FlashMM Warning'
+        text: |
+          {{ range .Alerts }}
+          *Warning:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Environment:* {{ .Labels.environment }}
+          *Service:* {{ .Labels.service }}
+          {{ end }}
+        send_resolved: true
+  
+  # Security alerts
+  - name: 'security-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#security-alerts'
+        title: '🔒 SECURITY ALERT: {{ .GroupLabels.alertname }}'
+        text: |
+          <!channel> Security Issue Detected
+          {{ range .Alerts }}
+          *Security Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Environment:* {{ .Labels.environment }}
+          *Instance:* {{ .Labels.instance }}
+          {{ if .Annotations.runbook_url }}*Runbook:* {{ .Annotations.runbook_url }}{{ end }}
+          {{ end }}
+        send_resolved: true
+    
+    email_configs:
+      - to: 'security@flashmm.com'
+        from: 'alerts@flashmm.com'
+        subject: '🔒 Security Alert - {{ .GroupLabels.alertname }}'
+        body: |
+          Security Alert Details:
+          
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Environment: {{ .Labels.environment }}
+          Instance: {{ .Labels.instance }}
+          {{ end }}
+  
+  # ML/AI model alerts
+  - name: 'ml-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#ml-alerts'
+        title: '🤖 ML Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *ML Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Model:* {{ .Labels.model_name }}
+          *Environment:* {{ .Labels.environment }}
+          {{ end }}
+        send_resolved: true
+  
+  # Database alerts
+  - name: 'database-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#database-alerts'
+        title: '🗄️ Database Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Database Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Service:* {{ .Labels.service }}
+          *Instance:* {{ .Labels.instance }}
+          {{ end }}
+        send_resolved: true
+  
+  # External API alerts
+  - name: 'external-api-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#external-api-alerts'
+        title: '🌐 External API Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *API Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *API:* {{ .Labels.instance }}
+          {{ end }}
+        send_resolved: true
+  
+  # Development environment alerts (less noisy)
+  - name: 'dev-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#dev-alerts'
+        title: '🔧 Dev Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Dev Environment:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true
+  
+  # Staging environment alerts
+  - name: 'staging-alerts'
+    slack_configs:
+      - api_url_file: '/etc/alertmanager/secrets/slack_webhook_url'
+        channel: '#staging-alerts'
+        title: '🚀 Staging Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *Staging Environment:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          {{ end }}
+        send_resolved: true

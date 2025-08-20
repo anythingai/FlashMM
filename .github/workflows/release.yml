@@ -1,0 +1,432 @@
+# FlashMM Release Workflow
+# Automated release management and changelog generation
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # =============================================================================
+  # Create Release
+  # =============================================================================
+  
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_id: ${{ steps.create_release.outputs.id }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          
+          if [ -z "$PREV_TAG" ]; then
+            PREV_TAG="$(git rev-list --max-parents=0 HEAD)"
+          fi
+          
+          echo "Generating changelog from $PREV_TAG to $CURRENT_TAG"
+          
+          # Generate changelog
+          cat > CHANGELOG.md << EOF
+          # Changelog for $CURRENT_TAG
+          
+          ## 🚀 Features
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="feat:" --grep="feature:" | head -20)
+          
+          ## 🐛 Bug Fixes
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="fix:" --grep="bug:" | head -20)
+          
+          ## 📚 Documentation
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="docs:" | head -10)
+          
+          ## 🔧 Maintenance
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="chore:" --grep="refactor:" | head -10)
+          
+          ## 📊 Performance
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="perf:" | head -10)
+          
+          ## 🔒 Security
+          $(git log $PREV_TAG..HEAD --pretty=format:"- %s" --grep="security:" --grep="sec:" | head -10)
+          
+          ---
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREV_TAG...$CURRENT_TAG
+          EOF
+          
+          # Remove empty sections
+          sed -i '/^## [^#]*$/,/^## [^#]*$/{/^## [^#]*$/!{/^## [^#]*$/!d;}}' CHANGELOG.md
+          sed -i '/^## [^#]*$/N;/\n$/d' CHANGELOG.md
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: FlashMM ${{ github.ref }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ github.event.inputs.prerelease || false }}
+
+  # =============================================================================
+  # Build Release Assets
+  # =============================================================================
+  
+  build-assets:
+    name: Build Release Assets
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Build wheel
+        run: |
+          poetry build
+      
+      - name: Create deployment package
+        run: |
+          mkdir -p release-assets
+          
+          # Copy Kubernetes manifests
+          cp -r k8s/ release-assets/
+          
+          # Copy Helm chart
+          cp -r helm/ release-assets/
+          
+          # Copy Terraform modules
+          cp -r terraform/ release-assets/
+          
+          # Copy Docker files
+          cp Dockerfile* release-assets/
+          cp docker-compose*.yml release-assets/
+          
+          # Copy deployment scripts
+          cp -r scripts/ release-assets/
+          
+          # Create deployment guide
+          cat > release-assets/DEPLOYMENT.md << EOF
+          # FlashMM Deployment Guide
+          
+          This release package contains all necessary files for deploying FlashMM.
+          
+          ## Quick Start
+          
+          ### Docker Compose (Recommended for development)
+          \`\`\`bash
+          docker-compose up -d
+          \`\`\`
+          
+          ### Kubernetes (Recommended for production)
+          \`\`\`bash
+          kubectl apply -f k8s/
+          \`\`\`
+          
+          ### Helm (Advanced)
+          \`\`\`bash
+          helm install flashmm ./helm/flashmm/
+          \`\`\`
+          
+          ### Terraform (Infrastructure)
+          \`\`\`bash
+          cd terraform/
+          terraform init
+          terraform plan
+          terraform apply
+          \`\`\`
+          
+          ## Configuration
+          
+          1. Copy .env.template to .env
+          2. Update configuration values
+          3. Deploy using your preferred method
+          
+          For full documentation, visit: https://github.com/${{ github.repository }}
+          EOF
+          
+          # Create archive
+          tar -czf flashmm-${{ github.ref_name }}-deployment.tar.gz -C release-assets .
+      
+      - name: Upload Release Asset - Wheel
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./dist/flashmm-*.whl
+          asset_name: flashmm-${{ github.ref_name }}-py3-none-any.whl
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Release Asset - Source
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./dist/flashmm-*.tar.gz
+          asset_name: flashmm-${{ github.ref_name }}.tar.gz
+          asset_content_type: application/gzip
+      
+      - name: Upload Release Asset - Deployment Package
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./flashmm-${{ github.ref_name }}-deployment.tar.gz
+          asset_name: flashmm-${{ github.ref_name }}-deployment.tar.gz
+          asset_content_type: application/gzip
+
+  # =============================================================================
+  # Build and Push Release Container Images
+  # =============================================================================
+  
+  build-release-images:
+    name: Build Release Images
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major_minor=$(echo $VERSION | cut -d. -f1-2)" >> $GITHUB_OUTPUT
+          echo "major=$(echo $VERSION | cut -d. -f1)" >> $GITHUB_OUTPUT
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.production
+          target: production
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major_minor }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          labels: |
+            org.opencontainers.image.title=FlashMM
+            org.opencontainers.image.description=High-Frequency Market Making Platform
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ github.sha }}
+
+  # =============================================================================
+  # Update Helm Chart Repository
+  # =============================================================================
+  
+  update-helm-repo:
+    name: Update Helm Repository
+    runs-on: ubuntu-latest
+    needs: [create-release, build-release-images]
+    if: github.repository_owner == 'flashmm'  # Only run for main repo
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Checkout helm-charts repository
+        uses: actions/checkout@v4
+        with:
+          repository: flashmm/helm-charts
+          token: ${{ secrets.HELM_REPO_TOKEN }}
+          path: helm-charts
+      
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+      
+      - name: Package Helm chart
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          # Update chart version
+          sed -i "s/version: .*/version: ${VERSION#v}/" helm/flashmm/Chart.yaml
+          sed -i "s/appVersion: .*/appVersion: ${VERSION#v}/" helm/flashmm/Chart.yaml
+          
+          # Package chart
+          helm package helm/flashmm/ --destination helm-charts/
+      
+      - name: Update Helm repository index
+        run: |
+          cd helm-charts
+          helm repo index . --url https://flashmm.github.io/helm-charts/
+      
+      - name: Commit and push changes
+        run: |
+          cd helm-charts
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add .
+          git commit -m "Add FlashMM ${GITHUB_REF#refs/tags/}" || exit 0
+          git push
+
+  # =============================================================================
+  # Deploy to Production (if enabled)
+  # =============================================================================
+  
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [create-release, build-release-images]
+    if: github.event.inputs.deploy_production == 'true' || (github.ref_type == 'tag' && !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc'))
+    environment:
+      name: production
+      url: https://api.flashmm.com
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: ${{ vars.AWS_REGION_PROD }}
+      
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig --region ${{ vars.AWS_REGION_PROD }} --name flashmm-production
+      
+      - name: Deploy using Helm
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          helm upgrade --install flashmm ./helm/flashmm/ \
+            --namespace flashmm \
+            --create-namespace \
+            --set global.imageTag=${VERSION#v} \
+            --set flashmm.image.tag=${VERSION#v} \
+            --set global.environment=production \
+            --wait \
+            --timeout=600s
+      
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/flashmm-app -n flashmm --timeout=300s
+          kubectl get pods -n flashmm
+      
+      - name: Run post-deployment tests
+        run: |
+          # Wait for services to be ready
+          sleep 60
+          
+          # Health check
+          kubectl run health-check --rm -i --restart=Never --image=curlimages/curl -- \
+            curl -f http://flashmm-app:8000/health/detailed
+      
+      - name: Notify successful deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: |
+            🚀 FlashMM ${{ github.ref }} successfully deployed to production!
+            
+            🔗 API: https://api.flashmm.com
+            📊 Monitoring: https://grafana.flashmm.com
+            📋 Release Notes: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: success()
+      
+      - name: Notify failed deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          text: |
+            🚨 FlashMM ${{ github.ref }} deployment to production failed!
+            
+            Please check the deployment logs and take corrective action.
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: failure()
+
+  # =============================================================================
+  # Notify Release
+  # =============================================================================
+  
+  notify-release:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    needs: [create-release, build-assets, build-release-images]
+    if: always()
+    
+    steps:
+      - name: Notify team
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          text: |
+            🎉 FlashMM ${{ github.ref }} has been released!
+            
+            📦 Release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+            🐳 Container: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ⛵ Helm: helm install flashmm oci://${{ env.REGISTRY }}/flashmm/helm/flashmm --version ${{ github.ref_name }}
+            
+            Ready for deployment! 🚀
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        if: success()

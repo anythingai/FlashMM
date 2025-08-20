@@ -1,0 +1,100 @@
+apiVersion: v2
+name: flashmm
+description: FlashMM High-Frequency Market Making Platform - Kubernetes Helm Chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.24.0"
+
+home: https://flashmm.com
+sources:
+  - https://github.com/flashmm/flashmm
+  - https://github.com/flashmm/flashmm-k8s
+
+maintainers:
+  - name: FlashMM Team
+    email: ops@flashmm.com
+    url: https://flashmm.com
+
+keywords:
+  - trading
+  - market-making
+  - high-frequency
+  - blockchain
+  - sei-network
+  - defi
+  - kubernetes
+  - fintech
+
+annotations:
+  category: Trading
+  licenses: MIT
+  images: |
+    - name: flashmm
+      image: ghcr.io/flashmm/flashmm:1.0.0
+    - name: redis
+      image: redis:7.2-alpine
+    - name: postgres
+      image: postgres:15-alpine
+    - name: influxdb
+      image: influxdb:2.7-alpine
+    - name: grafana
+      image: grafana/grafana:10.2.0
+    - name: prometheus
+      image: prom/prometheus:v2.47.0
+    - name: alertmanager
+      image: prom/alertmanager:v0.26.0
+    - name: elasticsearch
+      image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    - name: kibana
+      image: docker.elastic.co/kibana/kibana:8.10.2
+
+dependencies:
+  - name: postgresql
+    version: "12.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled
+    tags:
+      - database
+  - name: redis
+    version: "18.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled
+    tags:
+      - cache
+  - name: prometheus
+    version: "25.x.x"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: monitoring.prometheus.enabled
+    tags:
+      - monitoring
+  - name: grafana
+    version: "7.x.x"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: monitoring.grafana.enabled
+    tags:
+      - monitoring
+  - name: elasticsearch
+    version: "8.x.x"
+    repository: "https://helm.elastic.co"
+    condition: logging.elasticsearch.enabled
+    tags:
+      - logging
+  - name: kibana
+    version: "8.x.x"
+    repository: "https://helm.elastic.co"
+    condition: logging.kibana.enabled
+    tags:
+      - logging
+  - name: cert-manager
+    version: "1.x.x"
+    repository: "https://charts.jetstack.io"
+    condition: ingress.certManager.enabled
+    tags:
+      - tls
+  - name: nginx-ingress
+    version: "4.x.x"
+    repository: "https://kubernetes.github.io/ingress-nginx"
+    condition: ingress.nginx.enabled
+    tags:
+      - ingress

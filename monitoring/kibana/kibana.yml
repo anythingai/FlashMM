@@ -1,0 +1,138 @@
+# FlashMM Kibana Configuration
+# Log visualization and analysis interface
+
+# Server configuration
+server.name: "flashmm-kibana"
+server.host: "0.0.0.0"
+server.port: 5601
+server.basePath: ""
+server.rewriteBasePath: false
+
+# Elasticsearch configuration
+elasticsearch.hosts: ["http://elasticsearch:9200"]
+elasticsearch.username: "${ELASTICSEARCH_USERNAME:elastic}"
+elasticsearch.password: "${ELASTICSEARCH_PASSWORD}"
+elasticsearch.ssl.verificationMode: none
+
+# Kibana index pattern
+kibana.index: ".kibana"
+kibana.defaultAppId: "discover"
+
+# Logging configuration
+logging.appenders:
+  default:
+    type: console
+    layout:
+      type: json
+logging.root:
+  level: info
+  appenders: [default]
+
+# Security configuration
+xpack.security.enabled: true
+xpack.security.encryptionKey: "${KIBANA_ENCRYPTION_KEY:flashmm-kibana-encryption-key-change-me}"
+xpack.security.sessionTimeout: 8h
+
+# Monitoring configuration
+xpack.monitoring.enabled: true
+xpack.monitoring.kibana.collection.enabled: true
+xpack.monitoring.ui.container.elasticsearch.enabled: true
+
+# Reporting configuration
+xpack.reporting.enabled: true
+xpack.reporting.kibanaServer.hostname: "kibana.flashmm.com"
+
+# Canvas configuration
+xpack.canvas.enabled: true
+
+# Graph configuration
+xpack.graph.enabled: true
+
+# Machine Learning configuration
+xpack.ml.enabled: true
+
+# Dev Tools configuration
+console.enabled: true
+
+# Telemetry configuration (disable for privacy)
+telemetry.enabled: false
+telemetry.optIn: false
+
+# Index patterns and data views
+data.search.aggs.shardDelay.enabled: true
+data.search.sessions.enabled: true
+
+# Maps configuration
+xpack.maps.enabled: true
+
+# Fleet configuration (for log shipping)
+xpack.fleet.enabled: true
+
+# Saved objects encryption
+xpack.encryptedSavedObjects.encryptionKey: "${KIBANA_ENCRYPTION_KEY:flashmm-kibana-encryption-key-change-me}"
+
+# Actions and alerting
+xpack.actions.enabled: true
+xpack.alerting.enabled: true
+
+# Case management
+xpack.case.enabled: true
+
+# Advanced settings defaults
+uiSettings.overrides:
+  "dateFormat": "YYYY-MM-DD HH:mm:ss.SSS"
+  "dateFormat:tz": "UTC"
+  "defaultIndex": "flashmm-logs-*"
+  "timepicker:timeDefaults": "{\"from\":\"now-15m\",\"to\":\"now\"}"
+  "discover:sampleSize": 500
+  "doc_table:highlight": true
+  "filters:pinnedByDefault": true
+  "notifications:banner": ""
+  "query:queryString:options": "{\"analyze_wildcard\":true}"
+  "search:timeout": 600000
+  "shortDots:enable": false
+  "sort:options": "{\"unmapped_type\":\"boolean\"}"
+  "state:storeInSessionStorage": false
+  "timepicker:quickRanges": |
+    [
+      {"from": "now/d", "to": "now/d", "display": "Today"},
+      {"from": "now-1d/d", "to": "now-1d/d", "display": "Yesterday"},
+      {"from": "now-7d/d", "to": "now", "display": "Last 7 days"},
+      {"from": "now-30d/d", "to": "now", "display": "Last 30 days"},
+      {"from": "now-90d/d", "to": "now", "display": "Last 90 days"},
+      {"from": "now-1y/d", "to": "now", "display": "Last 1 year"}
+    ]
+
+# Custom branding (optional)
+# server.customResponseHeaders: 
+#   "X-Frame-Options": "SAMEORIGIN"
+#   "Content-Security-Policy": "default-src 'self'"
+
+# Performance tuning
+elasticsearch.requestTimeout: 90000
+elasticsearch.shardTimeout: 30000
+elasticsearch.pingTimeout: 1500
+
+# Map settings for geolocation visualization
+map.includeElasticMapsService: true
+map.proxyElasticMapsServiceInMaps: false
+
+# Regional map settings
+regionmap:
+  layers: []
+
+# Tilemap settings  
+tilemap:
+  options:
+    attribution: "© OpenStreetMap contributors"
+    maxZoom: 18
+    minZoom: 1
+    subdomains: []
+  url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+# Visualization settings
+vis_type_vega.enabled: true
+vis_type_timeline.enabled: true
+
+# Data quality settings
+data.ui.query.queryString.options: '{ "analyze_wildcard": true }'

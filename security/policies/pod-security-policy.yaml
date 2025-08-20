@@ -1,0 +1,582 @@
+# FlashMM Pod Security Standards
+# Kubernetes Pod Security Standards and Security Contexts
+
+# Pod Security Standards for FlashMM namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flashmm
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted  
+    pod-security.kubernetes.io/warn: restricted
+    security.flashmm.com/compliance: "soc2"
+    security.flashmm.com/data-classification: "confidential"
+
+---
+# Security Context Constraints for FlashMM
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: flashmm-scc
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+allowedFlexVolumes: []
+allowedUnsafeSysctls: []
+defaultAddCapabilities: []
+defaultAllowPrivilegeEscalation: false
+forbiddenSysctls:
+  - "*"
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 10001
+      max: 65535
+readOnlyRootFilesystem: true
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsNonRoot
+  uidRangeMin: 10001
+  uidRangeMax: 65535
+seLinuxContext:
+  type: MustRunAs
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+    - min: 10001
+      max: 65535
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+
+---
+# Resource Quota for Security Compliance
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: flashmm-security-quota
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  hard:
+    # Compute resources
+    requests.cpu: "20"
+    requests.memory: "40Gi"
+    limits.cpu: "40" 
+    limits.memory: "80Gi"
+    
+    # Storage resources
+    requests.storage: "1Ti"
+    persistentvolumeclaims: "20"
+    
+    # Object limits
+    pods: "50"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+    
+    # Security-related limits
+    services.loadbalancers: "2"
+    services.nodeports: "0"  # Disable NodePort services
+    
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: ["high-priority", "medium-priority"]
+
+---
+# Limit Range for Pod Security
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: flashmm-security-limits
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  limits:
+    # Container limits
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "1Gi"
+        ephemeral-storage: "2Gi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "256Mi"
+        ephemeral-storage: "1Gi"
+      max:
+        cpu: "8"
+        memory: "16Gi"
+        ephemeral-storage: "10Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+        ephemeral-storage: "100Mi"
+    
+    # Pod limits
+    - type: Pod
+      max:
+        cpu: "8"
+        memory: "16Gi"
+        ephemeral-storage: "10Gi"
+    
+    # Persistent Volume Claim limits
+    - type: PersistentVolumeClaim
+      min:
+        storage: "1Gi"
+      max:
+        storage: "1Ti"
+
+---
+# Security Context Template for FlashMM Pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flashmm-security-context
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  security-context.yaml: |
+    # Standard security context for FlashMM containers
+    securityContext:
+      # Pod-level security context
+      runAsNonRoot: true
+      runAsUser: 10001
+      runAsGroup: 10001
+      fsGroup: 10001
+      fsGroupChangePolicy: "OnRootMismatch"
+      seccompProfile:
+        type: RuntimeDefault
+      supplementalGroups: [10001]
+    
+    containerSecurityContext:
+      # Container-level security context
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 10001
+      runAsGroup: 10001
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+
+---
+# Falco Security Rules for Runtime Security
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-rules-flashmm
+  namespace: flashmm-system
+  labels:
+    app.kubernetes.io/name: falco
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  flashmm_rules.yaml: |
+    # FlashMM-specific Falco security rules
+    
+    - rule: FlashMM Sensitive File Access
+      desc: Detect access to sensitive FlashMM configuration files
+      condition: >
+        open_read and
+        container.name contains "flashmm" and
+        (fd.name contains ".env" or
+         fd.name contains "secrets" or
+         fd.name contains "private_key" or
+         fd.name contains "credentials")
+      output: >
+        Sensitive file accessed in FlashMM container
+        (user=%user.name command=%proc.cmdline file=%fd.name container=%container.name)
+      priority: WARNING
+      tags: [flashmm, security, file_access]
+    
+    - rule: FlashMM Unexpected Network Connection
+      desc: Detect unexpected network connections from FlashMM pods
+      condition: >
+        inbound_outbound and
+        container.name contains "flashmm" and
+        not ((fd.rport in (5432, 6379, 8086)) or  # Database connections
+             (fd.rport in (443, 80)) or            # HTTPS/HTTP
+             (fd.rport = 53))                      # DNS
+      output: >
+        Unexpected network connection from FlashMM
+        (user=%user.name command=%proc.cmdline connection=%fd.name container=%container.name)
+      priority: WARNING
+      tags: [flashmm, security, network]
+    
+    - rule: FlashMM Privilege Escalation Attempt
+      desc: Detect attempts to escalate privileges in FlashMM containers
+      condition: >
+        spawned_process and
+        container.name contains "flashmm" and
+        (proc.name in (su, sudo, doas) or
+         proc.args contains "chmod 777" or
+         proc.args contains "chown root")
+      output: >
+        Privilege escalation attempt in FlashMM container
+        (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: HIGH
+      tags: [flashmm, security, privilege_escalation]
+    
+    - rule: FlashMM Crypto Mining Detection
+      desc: Detect potential cryptocurrency mining in FlashMM containers
+      condition: >
+        spawned_process and
+        container.name contains "flashmm" and
+        (proc.name in (xmrig, minergate, cryptonight, monero) or
+         proc.args contains "stratum" or
+         proc.args contains "mining")
+      output: >
+        Potential crypto mining detected in FlashMM container
+        (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: CRITICAL
+      tags: [flashmm, security, crypto_mining]
+
+---
+# Open Policy Agent (OPA) Gatekeeper Constraints
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: flashmmrequiredsecuritycontext
+  labels:
+    app.kubernetes.io/name: gatekeeper
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  crd:
+    spec:
+      names:
+        kind: FlashMMRequiredSecurityContext
+      validation:
+        properties:
+          runAsNonRoot:
+            type: boolean
+          runAsUser:
+            type: integer
+          fsGroup:
+            type: integer
+          requiredDropCapabilities:
+            type: array
+            items:
+              type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package flashmmsecuritycontext
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "FlashMM containers must run as non-root"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser == 0
+          msg := "FlashMM containers must not run as UID 0"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := "FlashMM containers must use read-only root filesystem"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation != false
+          msg := "FlashMM containers must not allow privilege escalation"
+        }
+
+---
+# Constraint for FlashMM Security Context
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: FlashMMRequiredSecurityContext
+metadata:
+  name: flashmm-security-context-required
+  labels:
+    app.kubernetes.io/name: gatekeeper
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    namespaces: ["flashmm", "flashmm-staging", "flashmm-development"]
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/part-of: flashmm-platform
+  parameters:
+    runAsNonRoot: true
+    runAsUser: 10001
+    fsGroup: 10001
+    requiredDropCapabilities:
+      - "ALL"
+
+---
+# Image Security Policy
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy  
+metadata:
+  name: flashmm-image-security
+  labels:
+    app.kubernetes.io/name: kyverno
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+spec:
+  validationFailureAction: enforce
+  background: true
+  rules:
+    - name: require-trusted-registries
+      match:
+        any:
+        - resources:
+            kinds:
+            - Deployment
+            - DaemonSet
+            - StatefulSet
+            namespaces:
+            - flashmm
+            - flashmm-staging
+            - flashmm-production
+      validate:
+        message: "Images must come from trusted registries"
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                - name: "*"
+                  image: "ghcr.io/flashmm/*|docker.io/library/*|registry.k8s.io/*|quay.io/*"
+    
+    - name: require-image-signatures
+      match:
+        any:
+        - resources:
+            kinds:
+            - Deployment
+            namespaces:
+            - flashmm
+      validate:
+        message: "Production images must be signed"
+        deny:
+          conditions:
+            any:
+            - key: "{{ request.object.spec.template.metadata.labels.\"app.kubernetes.io/part-of\" }}"
+              operator: Equals
+              value: "flashmm-platform"
+        # This would integrate with Sigstore/Cosign for image signature verification
+    
+    - name: require-resource-limits
+      match:
+        any:
+        - resources:
+            kinds:
+            - Deployment
+            namespaces:
+            - flashmm
+      validate:
+        message: "Resource limits must be specified for security compliance"
+        pattern:
+          spec:
+            template:
+              spec:
+                containers:
+                - name: "*"
+                  resources:
+                    limits:
+                      memory: "?*"
+                      cpu: "?*"
+                    requests:
+                      memory: "?*"
+                      cpu: "?*"
+
+---
+# Admission Controller Webhook for Custom Security Policies
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionWebhook
+metadata:
+  name: flashmm-security-webhook
+  labels:
+    app.kubernetes.io/name: flashmm-security
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+webhooks:
+  - name: security.flashmm.com
+    clientConfig:
+      service:
+        name: flashmm-security-webhook
+        namespace: flashmm-system
+        path: "/validate"
+    rules:
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments", "daemonsets", "statefulsets"]
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+    failurePolicy: Fail
+    namespaceSelector:
+      matchLabels:
+        security.flashmm.com/enforce: "true"
+
+---
+# Security Baseline ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-baseline
+  namespace: flashmm-system
+  labels:
+    app.kubernetes.io/name: security-baseline
+    app.kubernetes.io/component: security
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  security-checklist.yaml: |
+    # FlashMM Security Baseline Checklist
+    
+    container_security:
+      - name: "Non-root user"
+        check: "securityContext.runAsNonRoot == true"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss"]
+      
+      - name: "Read-only root filesystem" 
+        check: "securityContext.readOnlyRootFilesystem == true"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+      
+      - name: "No privilege escalation"
+        check: "securityContext.allowPrivilegeEscalation == false"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss"]
+      
+      - name: "Drop all capabilities"
+        check: "securityContext.capabilities.drop contains ALL"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+      
+      - name: "Seccomp profile"
+        check: "securityContext.seccompProfile.type == RuntimeDefault"
+        severity: "medium"
+        compliance: ["iso27001"]
+    
+    network_security:
+      - name: "Network policies enabled"
+        check: "NetworkPolicy exists for namespace"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss"]
+      
+      - name: "TLS encryption"
+        check: "All external communications use TLS"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss", "gdpr"]
+      
+      - name: "Service mesh mTLS"
+        check: "Mutual TLS enabled between services"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+    
+    data_security:
+      - name: "Secrets encryption at rest"
+        check: "etcd encryption enabled"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss", "gdpr"]
+      
+      - name: "Persistent volume encryption"
+        check: "All PVs are encrypted"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss", "gdpr"]
+      
+      - name: "Database encryption"
+        check: "Database storage encryption enabled"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss", "gdpr"]
+    
+    access_control:
+      - name: "RBAC enabled"
+        check: "Role-based access control configured"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss"]
+      
+      - name: "Service accounts"
+        check: "Dedicated service accounts for components"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+      
+      - name: "Admission controllers"
+        check: "Security admission controllers enabled"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+    
+    monitoring_security:
+      - name: "Audit logging"
+        check: "Kubernetes audit logging enabled"
+        severity: "critical"
+        compliance: ["soc2", "iso27001", "pci-dss"]
+      
+      - name: "Security monitoring"
+        check: "Runtime security monitoring (Falco) enabled"
+        severity: "high"
+        compliance: ["soc2", "iso27001"]
+      
+      - name: "Log integrity"
+        check: "Logs are tamper-evident"
+        severity: "medium"
+        compliance: ["soc2", "iso27001"]
+    
+    compliance_requirements:
+      soc2:
+        - "Data encryption at rest and in transit"
+        - "Access control and authentication"
+        - "Security monitoring and logging"
+        - "Incident response procedures"
+        - "Regular security assessments"
+      
+      iso27001:
+        - "Information security management system"
+        - "Risk assessment and treatment"
+        - "Security controls implementation"
+        - "Continuous monitoring and improvement"
+        - "Documentation and records management"
+      
+      pci_dss:
+        - "Network segmentation and access control"
+        - "Strong cryptography and security protocols"
+        - "Secure development practices"
+        - "Regular security testing"
+        - "Security monitoring and logging"
+      
+      gdpr:
+        - "Data protection by design and default"
+        - "Data encryption and pseudonymization"
+        - "Access controls and audit trails"
+        - "Data breach detection and response"
+        - "Privacy impact assessments"

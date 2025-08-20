@@ -1,0 +1,366 @@
+# FlashMM Kubernetes ConfigMaps
+# Application configuration and environment-specific settings
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flashmm-config
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  # Application Configuration
+  ENVIRONMENT: "production"
+  FLASHMM_DEBUG: "false"
+  FLASHMM_LOG_LEVEL: "INFO"
+  FLASHMM_VERSION: "1.0.0"
+  PYTHONPATH: "/app/src"
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  
+  # Service URLs
+  REDIS_URL: "redis://flashmm-redis-master:6379/0"
+  INFLUXDB_URL: "http://flashmm-influxdb:8086"
+  POSTGRES_URL: "postgresql://flashmm@flashmm-postgres:5432/flashmm_prod"
+  PROMETHEUS_URL: "http://prometheus:9090"
+  GRAFANA_URL: "http://flashmm-grafana:3000"
+  
+  # Trading Configuration
+  TRADING_ENABLED: "true"
+  TRADING_MAX_POSITION_USDC: "10000.0"
+  TRADING_QUOTE_FREQUENCY_HZ: "10.0"
+  TRADING_MAX_QUOTE_LEVELS: "5"
+  TRADING_SPREAD_BUFFER_BPS: "3.0"
+  
+  # Monitoring Configuration
+  HEALTH_CHECK_INTERVAL_SECONDS: "30"
+  METRICS_COLLECTION_INTERVAL_SECONDS: "10"
+  
+  # ML Configuration
+  ML_CONFIDENCE_THRESHOLD: "0.7"
+  ML_INFERENCE_TIMEOUT_MS: "5"
+  
+  # Blockchain Configuration
+  SEI_NETWORK: "testnet"
+  SEI_CHAIN_ID: "atlantic-2"
+  
+  # Application Paths
+  FLASHMM_CONFIG_PATH: "/app/config"
+  FLASHMM_LOG_PATH: "/app/logs"
+  FLASHMM_DATA_PATH: "/app/data"
+  ML_MODEL_PATH: "/app/models/latest.pt"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  redis.conf: |
+    # Redis Configuration for FlashMM
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    # Memory Management
+    maxmemory 2gb
+    maxmemory-policy allkeys-lru
+    
+    # Persistence
+    appendonly yes
+    appendfsync everysec
+    
+    # Network
+    tcp-keepalive 60
+    timeout 0
+    
+    # Security
+    protected-mode yes
+    
+    # Logging
+    loglevel notice
+    
+    # Performance
+    tcp-nodelay yes
+    
+  master.conf: |
+    # Redis Master Configuration
+    port 6379
+    bind 0.0.0.0
+    
+  slave.conf: |
+    # Redis Slave Configuration
+    port 6379
+    bind 0.0.0.0
+    slave-read-only yes
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  postgresql.conf: |
+    # PostgreSQL Configuration for FlashMM
+    
+    # Connection Settings
+    listen_addresses = '*'
+    port = 5432
+    max_connections = 200
+    
+    # Memory Settings
+    shared_buffers = 256MB
+    effective_cache_size = 1GB
+    work_mem = 4MB
+    maintenance_work_mem = 64MB
+    
+    # Checkpoint Settings
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    
+    # Logging
+    log_destination = 'stderr'
+    logging_collector = on
+    log_directory = 'pg_log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'error'
+    log_min_duration_statement = 1000
+    
+    # Replication
+    wal_level = replica
+    max_wal_senders = 3
+    max_replication_slots = 3
+    hot_standby = on
+    
+  pg_hba.conf: |
+    # PostgreSQL Client Authentication Configuration
+    
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    local   all             all                                     trust
+    host    all             all             127.0.0.1/32            md5
+    host    all             all             ::1/128                 md5
+    host    all             all             10.0.0.0/8              md5
+    host    all             all             172.16.0.0/12           md5
+    host    all             all             192.168.0.0/16          md5
+    
+    # Replication connections
+    host    replication     replicator      10.0.0.0/8              md5
+    host    replication     replicator      172.16.0.0/12           md5
+    host    replication     replicator      192.168.0.0/16          md5
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: flashmm
+  labels:
+    app.kubernetes.io/name: nginx
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log warn;
+    pid /var/run/nginx.pid;
+    
+    events {
+        worker_connections 1024;
+        use epoll;
+        multi_accept on;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        # Logging
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        access_log /var/log/nginx/access.log main;
+        
+        # Performance
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        
+        # Gzip
+        gzip on;
+        gzip_vary on;
+        gzip_min_length 1024;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_conn_zone $binary_remote_addr zone=conn_limit_per_ip:10m;
+        
+        # Security headers
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        
+        upstream flashmm_backend {
+            least_conn;
+            server flashmm-app:8000 max_fails=3 fail_timeout=30s;
+            keepalive 32;
+        }
+        
+        server {
+            listen 80;
+            server_name _;
+            
+            # Health check endpoint
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+            }
+            
+            # API proxy
+            location /api/ {
+                limit_req zone=api burst=20 nodelay;
+                limit_conn conn_limit_per_ip 10;
+                
+                proxy_pass http://flashmm_backend;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                proxy_connect_timeout 30s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+                
+                proxy_buffering on;
+                proxy_buffer_size 4k;
+                proxy_buffers 8 4k;
+            }
+            
+            # Static content
+            location /static/ {
+                root /usr/share/nginx/html;
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: flashmm-monitoring
+  labels:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flashmm-platform
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'flashmm-k8s'
+        environment: 'production'
+    
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    scrape_configs:
+      # Prometheus itself
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      # Kubernetes API server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+      
+      # Kubernetes nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+      
+      # FlashMM Application
+      - job_name: 'flashmm-app'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - flashmm
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            action: keep
+            regex: flashmm
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: kubernetes_service_name
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: kubernetes_pod_name
+      
+      # Redis
+      - job_name: 'redis'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - flashmm
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            action: keep
+            regex: redis
+      
+      # PostgreSQL
+      - job_name: 'postgres'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - flashmm
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_label_app]
+            action: keep
+            regex: postgres

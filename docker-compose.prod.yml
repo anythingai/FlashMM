@@ -1,0 +1,648 @@
+# FlashMM Production Environment Docker Compose
+# Highly available, secure, and monitored production deployment
+
+version: '3.8'
+
+services:
+  # =============================================================================
+  # FlashMM Application - Production Configuration with HA
+  # =============================================================================
+  flashmm:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      target: production
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date -u +'%Y-%m-%dT%H:%M:%SZ')}
+        BUILD_VERSION: ${BUILD_VERSION:-latest}
+        GIT_COMMIT: ${GIT_COMMIT:-$(git rev-parse HEAD)}
+    image: ${REGISTRY:-ghcr.io}/flashmm/flashmm:${TAG:-latest}
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - FLASHMM_DEBUG=false
+      - FLASHMM_LOG_LEVEL=WARNING
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - INFLUXDB_URL=http://influxdb:8086
+      - POSTGRES_URL=postgresql://flashmm:${POSTGRES_PASSWORD}@postgres:5432/flashmm_prod
+      - PROMETHEUS_URL=http://prometheus:9090
+    env_file:
+      - .env.prod
+    volumes:
+      - prod_logs:/app/logs
+      - prod_data:/app/data
+      - prod_models:/app/models
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      postgres-master:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    networks:
+      - flashmm-prod
+      - monitoring
+      - backend
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+        reservations:
+          memory: 2G
+          cpus: '2.0'
+      restart_policy:
+        condition: on-failure
+        delay: 30s
+        max_attempts: 5
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 60s
+        failure_action: rollback
+        order: start-first
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/detailed"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 120s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.flashmm-prod.rule=Host(`api.flashmm.com`)"
+      - "traefik.http.routers.flashmm-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.services.flashmm-prod.loadbalancer.server.port=8000"
+      - "traefik.http.routers.flashmm-prod.middlewares=rate-limit,auth-prod,security-headers"
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=8000"
+      - "prometheus.io/path=/metrics"
+
+  # =============================================================================
+  # Redis Master-Slave Configuration for High Availability
+  # =============================================================================
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: flashmm-redis-master
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --masterauth ${REDIS_PASSWORD}
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --tcp-keepalive 60
+      --timeout 0
+      --protected-mode yes
+      --bind 0.0.0.0
+    volumes:
+      - redis_master_data:/data
+      - ./config/redis/redis-prod-master.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=6379"
+
+  redis-slave:
+    image: redis:7.2-alpine
+    container_name: flashmm-redis-slave
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --masterauth ${REDIS_PASSWORD}
+      --slaveof redis-master 6379
+      --slave-read-only yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+      --timeout 0
+      --protected-mode yes
+      --bind 0.0.0.0
+    volumes:
+      - redis_slave_data:/data
+      - ./config/redis/redis-prod-slave.conf:/usr/local/etc/redis/redis.conf:ro
+    depends_on:
+      - redis-master
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # =============================================================================
+  # PostgreSQL Master-Slave for High Availability
+  # =============================================================================
+  postgres-master:
+    image: postgres:15-alpine
+    container_name: flashmm-postgres-master
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=flashmm_prod
+      - POSTGRES_USER=flashmm
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_HOST_AUTH_METHOD=md5
+    volumes:
+      - postgres_master_data:/var/lib/postgresql/data
+      - ./config/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./config/postgres/init-prod.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backups/postgres:/backups
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flashmm -d flashmm_prod"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=5432"
+
+  postgres-slave:
+    image: postgres:15-alpine
+    container_name: flashmm-postgres-slave
+    restart: unless-stopped
+    environment:
+      - PGUSER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_MASTER_SERVICE=postgres-master
+      - POSTGRES_REPLICATION_USER=replicator
+      - POSTGRES_REPLICATION_PASSWORD=${POSTGRES_REPLICATION_PASSWORD}
+    volumes:
+      - postgres_slave_data:/var/lib/postgresql/data
+      - ./scripts/postgres-slave-setup.sh:/docker-entrypoint-initdb.d/setup-slave.sh:ro
+    depends_on:
+      - postgres-master
+    networks:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # =============================================================================
+  # InfluxDB with Clustering Support
+  # =============================================================================
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: flashmm-influxdb-prod
+    restart: unless-stopped
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=flashmm-prod
+      - DOCKER_INFLUXDB_INIT_BUCKET=metrics
+      - DOCKER_INFLUXDB_INIT_RETENTION=90d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+      - INFLUXD_LOG_LEVEL=error
+      - INFLUXD_REPORTING_DISABLED=true
+    volumes:
+      - influxdb_prod_data:/var/lib/influxdb2
+      - influxdb_prod_config:/etc/influxdb2
+      - ./config/influxdb/prod-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+      - ./backups/influxdb:/backups
+    networks:
+      - backend
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4.0'
+        reservations:
+          memory: 4G
+          cpus: '2.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.influxdb-prod.rule=Host(`influxdb.flashmm.com`)"
+      - "traefik.http.routers.influxdb-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.influxdb-prod.middlewares=auth-prod"
+      - "prometheus.io/scrape=true"
+      - "prometheus.io/port=8086"
+
+  # =============================================================================
+  # Monitoring Stack - Prometheus, Grafana, AlertManager
+  # =============================================================================
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: flashmm-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--storage.tsdb.retention.size=50GB'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--web.external-url=https://prometheus.flashmm.com'
+    volumes:
+      - prometheus_data:/prometheus
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - ./monitoring/prometheus/consoles:/etc/prometheus/consoles:ro
+      - ./monitoring/prometheus/console_libraries:/etc/prometheus/console_libraries:ro
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.flashmm.com`)"
+      - "traefik.http.routers.prometheus.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.prometheus.middlewares=auth-prod"
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: flashmm-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=https://alertmanager.flashmm.com'
+      - '--cluster.advertise-address=0.0.0.0:9093'
+    volumes:
+      - alertmanager_data:/alertmanager
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager/templates:/etc/alertmanager/templates:ro
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9093/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.alertmanager.rule=Host(`alertmanager.flashmm.com`)"
+      - "traefik.http.routers.alertmanager.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.alertmanager.middlewares=auth-prod"
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: flashmm-grafana-prod
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_USERS_ALLOW_ORG_CREATE=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource,grafana-worldmap-panel,grafana-piechart-panel,grafana-polystat-panel
+      - GF_FEATURE_TOGGLES_ENABLE=publicDashboards
+      - GF_LOG_LEVEL=error
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_DATABASE_TYPE=postgres
+      - GF_DATABASE_HOST=postgres-master:5432
+      - GF_DATABASE_NAME=grafana_prod
+      - GF_DATABASE_USER=grafana
+      - GF_DATABASE_PASSWORD=${GRAFANA_DB_PASSWORD}
+      - GF_SESSION_PROVIDER=postgres
+      - GF_SESSION_PROVIDER_CONFIG=user=grafana password=${GRAFANA_DB_PASSWORD} host=postgres-master port=5432 dbname=grafana_prod sslmode=require
+      - GF_SECURITY_SECRET_KEY=${GRAFANA_SECRET_KEY}
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=${SMTP_HOST}
+      - GF_SMTP_USER=${SMTP_USER}
+      - GF_SMTP_PASSWORD=${SMTP_PASSWORD}
+      - GF_SMTP_FROM_ADDRESS=alerts@flashmm.com
+    volumes:
+      - grafana_prod_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    networks:
+      - monitoring
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana-prod.rule=Host(`grafana.flashmm.com`)"
+      - "traefik.http.routers.grafana-prod.tls.certresolver=letsencrypt"
+
+  # =============================================================================
+  # ELK Stack for Log Management
+  # =============================================================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
+    container_name: flashmm-elasticsearch
+    restart: unless-stopped
+    environment:
+      - node.name=elasticsearch
+      - cluster.name=flashmm-logs
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      - xpack.license.self_generated.type=basic
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - ./config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.10.2
+    container_name: flashmm-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+      - SERVER_NAME=kibana.flashmm.com
+    volumes:
+      - ./config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:5601/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kibana.rule=Host(`kibana.flashmm.com`)"
+      - "traefik.http.routers.kibana.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.kibana.middlewares=auth-prod"
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.10.2
+    container_name: flashmm-logstash
+    restart: unless-stopped
+    volumes:
+      - ./config/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./config/logstash/pipeline:/usr/share/logstash/pipeline:ro
+    environment:
+      - "LS_JAVA_OPTS=-Xmx1g -Xms1g"
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - monitoring
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # =============================================================================
+  # HAProxy Load Balancer
+  # =============================================================================
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: flashmm-haproxy
+    restart: unless-stopped
+    volumes:
+      - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./config/haproxy/ssl:/etc/ssl/certs:ro
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # HAProxy stats
+    depends_on:
+      - flashmm
+    networks:
+      - flashmm-prod
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8404/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # =============================================================================
+  # Backup and Recovery Service
+  # =============================================================================
+  backup:
+    image: alpine:3.18
+    container_name: flashmm-backup-prod
+    restart: unless-stopped
+    environment:
+      - BACKUP_SCHEDULE=0 1 * * *  # Daily at 1 AM
+      - BACKUP_RETENTION_DAYS=90
+      - S3_BUCKET=${BACKUP_S3_BUCKET}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+    volumes:
+      - ./scripts/backup:/scripts:ro
+      - ./backups:/backups
+      - postgres_master_data:/data/postgres:ro
+      - influxdb_prod_data:/data/influxdb:ro
+      - redis_master_data:/data/redis:ro
+    command: >
+      sh -c "
+        apk add --no-cache curl postgresql-client redis aws-cli &&
+        echo '${BACKUP_SCHEDULE} /scripts/backup-all.sh' > /etc/crontabs/root &&
+        crond -f -d 8
+      "
+    depends_on:
+      - postgres-master
+      - influxdb
+      - redis-master
+    networks:
+      - backend
+    labels:
+      - "traefik.enable=false"
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  redis_master_data:
+    driver: local
+  redis_slave_data:
+    driver: local
+  postgres_master_data:
+    driver: local
+  postgres_slave_data:
+    driver: local
+  influxdb_prod_data:
+    driver: local
+  influxdb_prod_config:
+    driver: local
+  grafana_prod_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  alertmanager_data:
+    driver: local
+  elasticsearch_data:
+    driver: local
+  prod_logs:
+    driver: local
+  prod_data:
+    driver: local
+  prod_models:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  flashmm-prod:
+    driver: bridge
+    name: flashmm-prod-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.23.0.0/16
+          gateway: 172.23.0.1
+    labels:
+      - "com.docker.compose.project=flashmm-prod"
+  
+  backend:
+    driver: bridge
+    name: flashmm-backend-network
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.24.0.0/16
+          gateway: 172.24.0.1
+  
+  monitoring:
+    driver: bridge
+    name: flashmm-monitoring-network
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1

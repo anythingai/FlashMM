@@ -1,0 +1,668 @@
+# FlashMM Production Environment Configuration
+# High-availability, secure, and monitored production deployment
+
+global:
+  environment: production
+  domain: "flashmm.com"
+  imageRegistry: "ghcr.io"
+  imageTag: "latest"
+  storageClass: "fast-ssd"
+  
+# Application Configuration
+flashmm:
+  replicaCount: 3
+  
+  image:
+    repository: "ghcr.io/flashmm/flashmm"
+    tag: "latest"
+    pullPolicy: "IfNotPresent"
+  
+  config:
+    debug: false
+    logLevel: "WARNING"
+    trading:
+      enabled: true
+      maxPositionUSDC: 10000.0
+      quoteFrequencyHz: 10.0
+      maxQuoteLevels: 5
+      spreadBufferBps: 3.0
+    ml:
+      confidenceThreshold: 0.7
+      inferenceTimeoutMs: 5
+  
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+      ephemeral-storage: "1Gi"
+    limits:
+      memory: "4Gi"
+      cpu: "2"
+      ephemeral-storage: "5Gi"
+  
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    
+    # Custom metrics scaling
+    customMetrics:
+      - type: Pods
+        pods:
+          metric:
+            name: trading_requests_per_second
+          target:
+            type: AverageValue
+            averageValue: "100"
+      - type: Pods
+        pods:
+          metric:
+            name: market_data_latency_p95
+          target:
+            type: AverageValue
+            averageValue: "50m"
+  
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+  
+  # Anti-affinity for high availability
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [flashmm]
+          topologyKey: kubernetes.io/hostname
+
+# Database Configuration - High Availability
+postgresql:
+  enabled: true
+  architecture: "replication"
+  auth:
+    database: "flashmm_prod"
+    username: "flashmm"
+    existingSecret: "flashmm-db-credentials"
+  
+  primary:
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    persistence:
+      enabled: true
+      size: "200Gi"
+      storageClass: "fast-ssd"
+    
+    # High availability configuration
+    configuration: |
+      max_connections = 200
+      shared_buffers = 256MB
+      effective_cache_size = 2GB
+      maintenance_work_mem = 64MB
+      checkpoint_completion_target = 0.9
+      wal_buffers = 16MB
+      default_statistics_target = 100
+      random_page_cost = 1.1
+      effective_io_concurrency = 200
+      work_mem = 4MB
+      min_wal_size = 1GB
+      max_wal_size = 4GB
+      max_worker_processes = 8
+      max_parallel_workers_per_gather = 4
+      max_parallel_workers = 8
+      max_parallel_maintenance_workers = 4
+  
+  readReplicas:
+    replicaCount: 2
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    persistence:
+      enabled: true
+      size: "200Gi"
+      storageClass: "fast-ssd"
+  
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+    
+  # Automated backups
+  backup:
+    enabled: true
+    cronjob:
+      schedule: "0 2 * * *"
+      successfulJobsHistoryLimit: 3
+      failedJobsHistoryLimit: 1
+
+# Redis Configuration - High Availability
+redis:
+  enabled: true
+  architecture: "replication"
+  auth:
+    enabled: true
+    existingSecret: "flashmm-redis-credentials"
+  
+  master:
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    persistence:
+      enabled: true
+      size: "50Gi"
+      storageClass: "fast-ssd"
+    
+    # Production Redis configuration
+    configuration: |
+      maxmemory 3gb
+      maxmemory-policy allkeys-lru
+      save 900 1
+      save 300 10
+      save 60 10000
+      tcp-keepalive 60
+      timeout 0
+  
+  replica:
+    replicaCount: 2
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    persistence:
+      enabled: true
+      size: "50Gi"
+      storageClass: "fast-ssd"
+  
+  sentinel:
+    enabled: true
+    masterSet: "flashmm-redis"
+    
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+# InfluxDB Configuration - Production Scale
+influxdb:
+  enabled: true
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "2"
+    limits:
+      memory: "16Gi"
+      cpu: "8"
+  
+  persistence:
+    enabled: true
+    size: "500Gi"
+    storageClass: "fast-ssd"
+  
+  config:
+    admin:
+      existingSecret: "flashmm-influxdb-credentials"
+    organization: "flashmm-prod"
+    bucket: "metrics"
+    retention: "90d"
+  
+  # Clustering for high availability
+  clustering:
+    enabled: true
+    replicas: 3
+
+# Monitoring Configuration - Full Stack
+monitoring:
+  enabled: true
+  
+  prometheus:
+    enabled: true
+    server:
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+        limits:
+          memory: "8Gi"
+          cpu: "4"
+      persistence:
+        enabled: true
+        size: "200Gi"
+        storageClass: "fast-ssd"
+      retention: "90d"
+      
+      # High availability
+      replicaCount: 2
+      
+      # Storage optimization
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: fast-ssd
+            resources:
+              requests:
+                storage: 200Gi
+    
+    alertmanager:
+      enabled: true
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "100m"
+        limits:
+          memory: "512Mi"
+          cpu: "500m"
+      persistence:
+        enabled: true
+        size: "10Gi"
+      
+      # High availability
+      replicaCount: 3
+      
+      # Alert routing configuration
+      config:
+        global:
+          slack_api_url_file: '/etc/alertmanager/secrets/slack_api_url'
+        route:
+          group_by: ['alertname']
+          group_wait: 10s
+          group_interval: 10s
+          repeat_interval: 1h
+          receiver: 'web.hook'
+        receivers:
+          - name: 'web.hook'
+            slack_configs:
+              - channel: '#alerts'
+                title: 'FlashMM Production Alert'
+                text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+  
+  grafana:
+    enabled: true
+    admin:
+      username: "admin"
+      existingSecret: "flashmm-grafana-credentials"
+    
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    
+    persistence:
+      enabled: true
+      size: "20Gi"
+      storageClass: "fast-ssd"
+    
+    # High availability
+    replicas: 2
+    
+    # Database backend
+    database:
+      type: postgres
+      host: flashmm-postgresql
+      name: grafana_prod
+      user: grafana
+      existingSecret: "grafana-db-credentials"
+    
+    dashboards:
+      enabled: true
+      label: "grafana_dashboard"
+      labelValue: "1"
+    
+    datasources:
+      enabled: true
+      defaultDatasourceEnabled: true
+
+# Logging Configuration - ELK Stack
+logging:
+  enabled: true
+  
+  elasticsearch:
+    enabled: true
+    replicas: 3
+    resources:
+      requests:
+        memory: "4Gi"
+        cpu: "2"
+      limits:
+        memory: "8Gi"
+        cpu: "4"
+    
+    persistence:
+      enabled: true
+      size: "200Gi"
+      storageClass: "fast-ssd"
+    
+    # Production ES configuration
+    esConfig:
+      elasticsearch.yml: |
+        cluster.name: "flashmm-logs"
+        network.host: 0.0.0.0
+        discovery.seed_hosts: "elasticsearch-headless"
+        cluster.initial_master_nodes: "elasticsearch-0,elasticsearch-1,elasticsearch-2"
+        discovery.zen.minimum_master_nodes: 2
+        xpack.security.enabled: true
+        xpack.license.self_generated.type: basic
+  
+  kibana:
+    enabled: true
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1"
+    
+    replicas: 2
+    
+    kibanaConfig:
+      kibana.yml: |
+        server.name: kibana
+        server.host: 0.0.0.0
+        elasticsearch.hosts: http://elasticsearch:9200
+        elasticsearch.username: elastic
+        elasticsearch.password: ${ELASTICSEARCH_PASSWORD}
+  
+  logstash:
+    enabled: true
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    
+    replicas: 2
+    
+    # Log processing pipeline
+    logstashConfig:
+      logstash.yml: |
+        http.host: "0.0.0.0"
+        path.config: /usr/share/logstash/pipeline
+      pipelines.yml: |
+        - pipeline.id: main
+          path.config: "/usr/share/logstash/pipeline/logstash.conf"
+
+# Ingress Configuration - Production Grade
+ingress:
+  enabled: true
+  className: "nginx"
+  
+  nginx:
+    enabled: true
+    controller:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1Gi"
+          cpu: "1"
+      
+      # High availability
+      replicaCount: 3
+      
+      # Performance tuning
+      config:
+        use-gzip: "true"
+        gzip-level: "6"
+        client-body-buffer-size: "64k"
+        client-body-timeout: "60s"
+        client-header-timeout: "60s"
+        keepalive-timeout: "10s"
+        large-client-header-buffers: "4 64k"
+        proxy-body-size: "10m"
+        proxy-buffer-size: "4k"
+        ssl-protocols: "TLSv1.2 TLSv1.3"
+        ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+  
+  certManager:
+    enabled: true
+    issuer: "letsencrypt-prod"
+    email: "ops@flashmm.com"
+  
+  hosts:
+    - host: "api.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-app"
+          port: 8000
+    - host: "grafana.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "flashmm-grafana"
+          port: 3000
+    - host: "prometheus.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "prometheus"
+          port: 9090
+    - host: "alertmanager.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "alertmanager"
+          port: 9093
+    - host: "kibana.flashmm.com"
+      paths:
+        - path: "/"
+          pathType: "Prefix"
+          service: "kibana"
+          port: 5601
+  
+  tls:
+    enabled: true
+    secretName: "flashmm-prod-tls"
+
+# Security Configuration - Hardened
+security:
+  podSecurityPolicy:
+    enabled: true
+  
+  networkPolicy:
+    enabled: true
+    ingress:
+      enabled: true
+      allowedSources:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+    egress:
+      enabled: true
+      allowedDestinations:
+        - namespaceSelector: {}
+        - podSelector: {}
+  
+  rbac:
+    enabled: true
+    create: true
+  
+  serviceAccount:
+    create: true
+    name: "flashmm-prod"
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT:role/flashmm-prod-role"
+
+# Backup Configuration - Comprehensive
+backup:
+  enabled: true
+  schedule: "0 1 * * *"  # Daily at 1 AM
+  retention: "90d"
+  
+  s3:
+    bucket: "flashmm-prod-backups"
+    region: "us-east-1"
+    storageClass: "STANDARD_IA"
+    encryptionKey: "aws:kms"
+  
+  # Multi-region replication
+  replication:
+    enabled: true
+    regions:
+      - "us-west-2"
+      - "eu-west-1"
+  
+  # Backup validation
+  validation:
+    enabled: true
+    schedule: "0 4 * * 0"  # Weekly validation
+
+# External Dependencies - Production
+external:
+  sei:
+    network: "mainnet"
+    rpcUrl: "https://sei-rpc.polkachu.com"
+    wsUrl: "wss://sei-rpc.polkachu.com/websocket"
+    chainId: "pacific-1"
+  
+  cambrian:
+    baseUrl: "https://api.cambrian.com"
+  
+  azure:
+    openai:
+      endpoint: "https://prod-openai.openai.azure.com/"
+      apiVersion: "2023-12-01-preview"
+
+# Feature Flags - Production
+features:
+  enableServiceMesh: true
+  enableAutoScaling: true
+  enableNetworkPolicies: true
+  enablePodSecurityPolicies: true
+  enableSpotInstances: true
+
+# Performance Configuration
+performance:
+  nodeAffinity:
+    enabled: true
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - matchExpressions:
+          - key: "node-type"
+            operator: In
+            values: ["high-performance", "compute-optimized"]
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: "instance-type"
+              operator: In
+              values: ["c5.xlarge", "c5.2xlarge"]
+  
+  tolerations:
+    enabled: true
+    tolerations:
+      - key: "high-performance"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      - key: "spot-instance"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+
+# Cost Optimization
+costOptimization:
+  enableSpotInstances: true
+  spotInstancePercentage: 40
+  
+  resourceQuotas:
+    enabled: true
+    hard:
+      "requests.cpu": "50"
+      "requests.memory": "100Gi"
+      "limits.cpu": "100"
+      "limits.memory": "200Gi"
+      "persistentvolumeclaims": "50"
+      "services.loadbalancers": "5"
+  
+  # Vertical Pod Autoscaling
+  verticalPodAutoscaler:
+    enabled: true
+    updateMode: "Auto"
+
+# Compliance and Governance
+compliance:
+  # SOC2 compliance
+  soc2:
+    enabled: true
+    auditLogging: true
+    encryptionAtRest: true
+    encryptionInTransit: true
+  
+  # GDPR compliance
+  gdpr:
+    enabled: true
+    dataRetentionPeriod: "2y"
+    rightToErasure: true
+  
+  # Financial regulations
+  finra:
+    enabled: true
+    tradeReporting: true
+    recordKeeping: "7y"
+
+# Disaster Recovery
+disasterRecovery:
+  enabled: true
+  
+  # Multi-region setup
+  multiRegion:
+    enabled: true
+    primaryRegion: "us-east-1"
+    secondaryRegions:
+      - "us-west-2"
+      - "eu-west-1"
+  
+  # Recovery objectives
+  rto: "1h"  # Recovery Time Objective
+  rpo: "15m" # Recovery Point Objective
+  
+  # Automated failover
+  autoFailover:
+    enabled: true
+    healthCheckInterval: "30s"
+    failureThreshold: 3
+
+# Environment-specific Secrets Management
+secrets:
+  externalSecrets:
+    enabled: true
+    provider: "aws-secrets-manager"
+    region: "us-east-1"
+    secretStoreRef: "flashmm-prod-secrets"
+    refreshInterval: "1h"
+  
+  # Secret rotation
+  rotation:
+    enabled: true
+    schedule: "0 2 1 * *"  # Monthly rotation

@@ -1,0 +1,194 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "flashmm"
+version = "1.0.0"
+description = "FlashMM - Predictive On-Chain Market Making Agent for Sei Blockchain"
+authors = ["FlashMM Team <team@flashmm.ai>"]
+readme = "README.md"
+license = "MIT"
+homepage = "https://github.com/flashmm/flashmm"
+repository = "https://github.com/flashmm/flashmm"
+documentation = "https://docs.flashmm.ai"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.100.1"
+uvicorn = {extras = ["standard"], version = "^0.23.2"}
+uvloop = "^0.17.0"
+websockets = "^11.0.2"
+aiohttp = "^3.8.5"
+pydantic = "^2.1.1"
+orjson = "^3.9.4"
+msgpack = "^1.0.5"
+numpy = "^1.24.3"
+torch = {version = "^2.0.1", source = "pytorch-cpu"}
+torchvision = {version = "^0.15.2", source = "pytorch-cpu"}
+scikit-learn = "^1.3.0"
+redis = "^4.6.0"
+influxdb-client = "^1.37.0"
+cryptography = "^41.0.3"
+PyJWT = "^2.8.0"
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+python-dotenv = "^1.0.0"
+structlog = "^23.1.0"
+python-json-logger = "^2.0.7"
+prometheus-client = "^0.17.1"
+psutil = "^5.9.5"
+tweepy = "^4.14.0"
+Pillow = "^10.0.0"
+matplotlib = "^3.7.2"
+python-dateutil = "^2.8.2"
+pytz = "^2023.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+pytest-mock = "^3.11.1"
+ruff = "^0.0.280"
+black = "^23.7.0"
+mypy = "^1.5.1"
+bandit = "^1.7.5"
+pre-commit = "^3.3.3"
+types-redis = "^4.6.0"
+types-python-dateutil = "^2.8.19"
+
+[tool.poetry.group.test.dependencies]
+httpx = "^0.24.1"
+factory-boy = "^3.3.0"
+faker = "^19.3.0"
+locust = "^2.16.1"
+
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[tool.poetry.scripts]
+flashmm = "flashmm.main:main"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "S",   # flake8-bandit
+    "T20", # flake8-print
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "S101",  # use of assert detected
+    "T201",  # print statements (allowed in scripts)
+]
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101", "S106", "S108"]
+"scripts/*" = ["T201", "S108"]
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # Exclude generated files
+  \.git
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "cambrian_sdk.*",
+    "matplotlib.*",
+    "tweepy.*",
+]
+ignore_missing_imports = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv", ".venv"]
+skips = ["B101", "B601"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "--strict-markers",
+    "--disable-warnings",
+    "--cov=src/flashmm",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "slow: Slow tests",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/flashmm"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

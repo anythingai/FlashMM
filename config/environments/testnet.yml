@@ -1,0 +1,37 @@
+# FlashMM Testnet Environment Configuration
+
+app:
+  debug: false
+  log_level: INFO
+
+trading:
+  enable_trading: true
+  max_position_usdc: 2000.0
+  quote_frequency_hz: 5.0
+
+sei:
+  network: "testnet"
+  rpc_url: "https://rpc.sei-apis.com"
+  ws_url: "wss://rpc.sei-apis.com/websocket"
+  chain_id: "pacific-1"
+
+storage:
+  redis:
+    host: "redis"
+    port: 6379
+    db: 0
+  influxdb:
+    host: "influxdb"
+    port: 8086
+    database: "flashmm_testnet"
+
+monitoring:
+  grafana_enabled: true
+  twitter_enabled: true
+  alert_thresholds:
+    max_drawdown_percent: 5.0
+    min_uptime_percent: 95.0
+
+security:
+  encryption_required: false
+  audit_logging: true

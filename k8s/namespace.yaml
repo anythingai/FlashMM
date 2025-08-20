@@ -1,0 +1,45 @@
+# FlashMM Kubernetes Namespace
+# Creates isolated namespace for all FlashMM resources
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flashmm
+  labels:
+    name: flashmm
+    app.kubernetes.io/name: flashmm
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: infrastructure
+    app.kubernetes.io/part-of: flashmm-platform
+  annotations:
+    kubernetes.io/managed-by: kubectl
+    description: "FlashMM High-Frequency Market Making Platform"
+    contact: "ops@flashmm.com"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flashmm-monitoring
+  labels:
+    name: flashmm-monitoring
+    app.kubernetes.io/name: flashmm-monitoring
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: flashmm-platform
+  annotations:
+    kubernetes.io/managed-by: kubectl
+    description: "FlashMM Monitoring and Observability Stack"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flashmm-system
+  labels:
+    name: flashmm-system
+    app.kubernetes.io/name: flashmm-system
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: system
+    app.kubernetes.io/part-of: flashmm-platform
+  annotations:
+    kubernetes.io/managed-by: kubectl
+    description: "FlashMM System Components and Infrastructure"

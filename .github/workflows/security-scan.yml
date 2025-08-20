@@ -1,0 +1,350 @@
+# FlashMM Security Scanning Workflow
+# Automated security scanning and vulnerability management
+
+name: Security Scan
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # =============================================================================
+  # Dependency Vulnerability Scanning
+  # =============================================================================
+  
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install Poetry
+        run: |
+          curl -sSL https://install.python-poetry.org | python3 -
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      
+      - name: Install dependencies
+        run: |
+          poetry config virtualenvs.create false
+          poetry install --with dev,test
+      
+      - name: Run Safety check
+        run: |
+          safety check --json --output safety-report.json
+        continue-on-error: true
+      
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit --format=json --output=pip-audit-report.json
+        continue-on-error: true
+      
+      - name: Upload vulnerability reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: vulnerability-reports
+          path: |
+            safety-report.json
+            pip-audit-report.json
+          retention-days: 30
+
+  # =============================================================================
+  # Container Image Security Scanning
+  # =============================================================================
+  
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Build image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.production
+          target: production
+          load: true
+          tags: flashmm:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'flashmm:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-fs-results.sarif'
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: |
+            trivy-results.sarif
+            trivy-fs-results.sarif
+      
+      - name: Run Grype vulnerability scanner
+        uses: anchore/scan-action@v3
+        with:
+          image: "flashmm:scan"
+          format: sarif
+          output-file: grype-results.sarif
+      
+      - name: Upload Grype scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: grype-results.sarif
+
+  # =============================================================================
+  # Infrastructure Security Scanning
+  # =============================================================================
+  
+  infrastructure-scan:
+    name: Infrastructure Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run Checkov scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform,kubernetes,dockerfile
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          quiet: true
+      
+      - name: Upload Checkov scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+      
+      - name: Run Terrascan
+        uses: tenable/terrascan-action@main
+        with:
+          iac_type: 'terraform'
+          iac_version: '1.6'
+          policy_type: 'aws'
+          only_warn: true
+          sarif_upload: true
+      
+      - name: Run TFSec
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: terraform
+          format: sarif
+          soft_fail: true
+      
+      - name: Upload TFSec results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: results.sarif
+
+  # =============================================================================
+  # Secrets Scanning
+  # =============================================================================
+  
+  secrets-scan:
+    name: Secrets Scanning
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      
+      - name: Run TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  # =============================================================================
+  # Code Quality Security
+  # =============================================================================
+  
+  code-security:
+    name: Code Security Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: python
+      
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v2
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+      
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/ci
+            p/r2c-best-practices
+          generateSarif: "1"
+      
+      - name: Upload Semgrep results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+  # =============================================================================
+  # Compliance Checking
+  # =============================================================================
+  
+  compliance-check:
+    name: Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run CIS Kubernetes Benchmark
+        run: |
+          # Download and run kube-bench for Kubernetes compliance
+          curl -L https://github.com/aquasecurity/kube-bench/releases/latest/download/kube-bench_linux_amd64.tar.gz -o kube-bench.tar.gz
+          tar -xzf kube-bench.tar.gz
+          ./kube-bench --version
+      
+      - name: Check Docker compliance
+        run: |
+          # Run docker-bench-security
+          docker run --rm --net host --pid host --userns host --cap-add audit_control \
+            -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
+            -v /etc:/etc:ro \
+            -v /usr/bin/containerd:/usr/bin/containerd:ro \
+            -v /usr/bin/runc:/usr/bin/runc:ro \
+            -v /usr/lib/systemd:/usr/lib/systemd:ro \
+            -v /var/lib:/var/lib:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            --label docker_bench_security \
+            docker/docker-bench-security || true
+      
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.7.0
+        with:
+          target: 'https://staging-api.flashmm.com'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+
+  # =============================================================================
+  # Security Report Generation
+  # =============================================================================
+  
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, container-scan, infrastructure-scan, secrets-scan, code-security]
+    if: always()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      
+      - name: Generate security summary
+        run: |
+          echo "# FlashMM Security Scan Summary" > security-summary.md
+          echo "Date: $(date)" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          echo "## Scan Results" >> security-summary.md
+          echo "- Dependency Scan: ${{ needs.dependency-scan.result }}" >> security-summary.md
+          echo "- Container Scan: ${{ needs.container-scan.result }}" >> security-summary.md
+          echo "- Infrastructure Scan: ${{ needs.infrastructure-scan.result }}" >> security-summary.md
+          echo "- Secrets Scan: ${{ needs.secrets-scan.result }}" >> security-summary.md
+          echo "- Code Security: ${{ needs.code-security.result }}" >> security-summary.md
+          echo "" >> security-summary.md
+          
+          echo "## Next Steps" >> security-summary.md
+          echo "1. Review all SARIF files uploaded to GitHub Security tab" >> security-summary.md
+          echo "2. Address any HIGH or CRITICAL vulnerabilities" >> security-summary.md
+          echo "3. Update dependencies with known vulnerabilities" >> security-summary.md
+          echo "4. Review and remediate infrastructure misconfigurations" >> security-summary.md
+      
+      - name: Upload security summary
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-summary
+          path: security-summary.md
+          retention-days: 90
+      
+      - name: Create security issue
+        if: needs.dependency-scan.result == 'failure' || needs.container-scan.result == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Security Vulnerabilities Detected',
+              body: `Security scan has detected vulnerabilities that require attention.
+              
+              **Scan Results:**
+              - Dependency Scan: ${{ needs.dependency-scan.result }}
+              - Container Scan: ${{ needs.container-scan.result }}
+              - Infrastructure Scan: ${{ needs.infrastructure-scan.result }}
+              
+              Please review the Security tab and artifacts for detailed findings.
+              
+              **Priority:** High
+              **Auto-generated:** ${new Date().toISOString()}`,
+              labels: ['security', 'vulnerability', 'high-priority']
+            })

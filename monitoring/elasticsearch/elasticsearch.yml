@@ -1,0 +1,84 @@
+# FlashMM Elasticsearch Configuration
+# Centralized logging and search configuration
+
+# Cluster settings
+cluster.name: "flashmm-logs"
+node.name: "${HOSTNAME}"
+node.roles: ["master", "data", "ingest"]
+
+# Network settings
+network.host: 0.0.0.0
+http.port: 9200
+transport.port: 9300
+
+# Discovery settings for cluster formation
+discovery.seed_hosts: ["elasticsearch-headless"]
+cluster.initial_master_nodes: ["elasticsearch-0", "elasticsearch-1", "elasticsearch-2"]
+discovery.zen.minimum_master_nodes: 2
+
+# Path settings
+path.data: /usr/share/elasticsearch/data
+path.logs: /usr/share/elasticsearch/logs
+
+# Memory settings
+bootstrap.memory_lock: true
+
+# Security settings
+xpack.security.enabled: true
+xpack.security.transport.ssl.enabled: true
+xpack.security.transport.ssl.verification_mode: certificate
+xpack.security.transport.ssl.client_authentication: required
+xpack.security.transport.ssl.keystore.path: elastic-certificates.p12
+xpack.security.transport.ssl.truststore.path: elastic-certificates.p12
+
+xpack.security.http.ssl.enabled: false
+
+# License settings
+xpack.license.self_generated.type: basic
+
+# Monitoring settings
+xpack.monitoring.collection.enabled: true
+
+# Index lifecycle management
+xpack.ilm.enabled: true
+
+# Index settings
+action.destructive_requires_name: true
+indices.query.bool.max_clause_count: 10000
+
+# Performance tuning
+thread_pool:
+  write:
+    size: 2
+    queue_size: 1000
+  search:
+    size: 13
+    queue_size: 1000
+  get:
+    size: 2
+    queue_size: 1000
+
+# Logging levels
+logger.org.elasticsearch.discovery: INFO
+logger.org.elasticsearch.cluster.service: INFO
+
+# Index templates for FlashMM logs
+index.number_of_shards: 1
+index.number_of_replicas: 1
+index.refresh_interval: 30s
+
+# Disk allocation settings
+cluster.routing.allocation.disk.threshold_enabled: true
+cluster.routing.allocation.disk.watermark.low: 85%
+cluster.routing.allocation.disk.watermark.high: 90%
+cluster.routing.allocation.disk.watermark.flood_stage: 95%
+
+# Circuit breaker settings
+indices.breaker.total.limit: 70%
+indices.breaker.fielddata.limit: 40%
+indices.breaker.request.limit: 40%
+
+# GC settings (set via JVM options in deployment)
+# -Xms2g
+# -Xmx2g
+# -XX:+UseG1GC

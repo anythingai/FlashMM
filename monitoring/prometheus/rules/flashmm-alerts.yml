@@ -1,0 +1,369 @@
+# FlashMM Prometheus Alerting Rules
+# Critical alerts for trading platform monitoring
+
+groups:
+  # =============================================================================
+  # FlashMM Application Alerts
+  # =============================================================================
+  - name: flashmm.application
+    interval: 30s
+    rules:
+      - alert: FlashMMDown
+        expr: up{job="flashmm-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: flashmm
+          team: platform
+        annotations:
+          summary: "FlashMM application is down"
+          description: "FlashMM application {{ $labels.instance }} has been down for more than 1 minute."
+          runbook_url: "https://runbooks.flashmm.com/flashmm-down"
+
+      - alert: FlashMMHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="flashmm-app"}[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          service: flashmm
+          team: platform
+        annotations:
+          summary: "FlashMM high request latency"
+          description: "FlashMM P95 latency is {{ $value }}s on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.flashmm.com/high-latency"
+
+      - alert: FlashMMHighErrorRate
+        expr: (rate(http_requests_total{job="flashmm-app",status=~"5.."}[5m]) / rate(http_requests_total{job="flashmm-app"}[5m])) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+          service: flashmm
+          team: platform
+        annotations:
+          summary: "FlashMM high error rate"
+          description: "FlashMM error rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.flashmm.com/high-error-rate"
+
+      - alert: FlashMMMemoryUsageHigh
+        expr: (container_memory_working_set_bytes{container="flashmm"} / container_spec_memory_limit_bytes{container="flashmm"}) > 0.85
+        for: 2m
+        labels:
+          severity: warning
+          service: flashmm
+          team: platform
+        annotations:
+          summary: "FlashMM high memory usage"
+          description: "FlashMM memory usage is {{ $value | humanizePercentage }} on {{ $labels.pod }}"
+          runbook_url: "https://runbooks.flashmm.com/high-memory"
+
+      - alert: FlashMMCPUUsageHigh
+        expr: (rate(container_cpu_usage_seconds_total{container="flashmm"}[5m]) / container_spec_cpu_quota{container="flashmm"} * 100000) > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: flashmm
+          team: platform
+        annotations:
+          summary: "FlashMM high CPU usage"
+          description: "FlashMM CPU usage is {{ $value }}% on {{ $labels.pod }}"
+          runbook_url: "https://runbooks.flashmm.com/high-cpu"
+
+  # =============================================================================
+  # Trading-Specific Alerts
+  # =============================================================================
+  - name: flashmm.trading
+    interval: 15s
+    rules:
+      - alert: TradingEngineDown
+        expr: flashmm_trading_engine_status == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: trading
+          team: trading
+        annotations:
+          summary: "Trading engine is down"
+          description: "Trading engine on {{ $labels.instance }} is not operational"
+          runbook_url: "https://runbooks.flashmm.com/trading-engine-down"
+
+      - alert: HighTradingLatency
+        expr: histogram_quantile(0.95, rate(flashmm_trading_latency_seconds_bucket[1m])) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+          service: trading
+          team: trading
+        annotations:
+          summary: "High trading latency detected"
+          description: "P95 trading latency is {{ $value }}s, exceeding 100ms threshold"
+          runbook_url: "https://runbooks.flashmm.com/high-trading-latency"
+
+      - alert: OrderBookUpdateLag
+        expr: time() - flashmm_orderbook_last_update_timestamp > 10
+        for: 30s
+        labels:
+          severity: critical
+          service: trading
+          team: trading
+        annotations:
+          summary: "Order book update lag detected"
+          description: "Order book hasn't been updated for {{ $value }}s on {{ $labels.pair }}"
+          runbook_url: "https://runbooks.flashmm.com/orderbook-lag"
+
+      - alert: PositionLimitApproaching
+        expr: (flashmm_position_current / flashmm_position_limit) > 0.9
+        for: 1m
+        labels:
+          severity: warning
+          service: trading
+          team: trading
+        annotations:
+          summary: "Position limit approaching"
+          description: "Position is {{ $value | humanizePercentage }} of limit for {{ $labels.symbol }}"
+          runbook_url: "https://runbooks.flashmm.com/position-limit"
+
+      - alert: PnLThresholdBreach
+        expr: flashmm_pnl_unrealized < -10000
+        for: 2m
+        labels:
+          severity: critical
+          service: trading
+          team: trading
+        annotations:
+          summary: "PnL threshold breached"
+          description: "Unrealized PnL is {{ $value }} USD, below -10,000 threshold"
+          runbook_url: "https://runbooks.flashmm.com/pnl-breach"
+
+  # =============================================================================
+  # ML Model Alerts
+  # =============================================================================
+  - name: flashmm.ml
+    interval: 60s
+    rules:
+      - alert: MLModelDown
+        expr: flashmm_ml_model_status == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: ml
+          team: ml
+        annotations:
+          summary: "ML model is down"
+          description: "ML model {{ $labels.model_name }} is not responding"
+          runbook_url: "https://runbooks.flashmm.com/ml-model-down"
+
+      - alert: MLInferenceLag
+        expr: histogram_quantile(0.95, rate(flashmm_ml_inference_duration_seconds_bucket[5m])) > 0.005
+        for: 3m
+        labels:
+          severity: warning
+          service: ml
+          team: ml
+        annotations:
+          summary: "ML inference latency high"
+          description: "P95 ML inference time is {{ $value }}s, exceeding 5ms threshold"
+          runbook_url: "https://runbooks.flashmm.com/ml-inference-lag"
+
+      - alert: MLModelAccuracyDrop
+        expr: flashmm_ml_model_accuracy < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          service: ml
+          team: ml
+        annotations:
+          summary: "ML model accuracy degraded"
+          description: "Model {{ $labels.model_name }} accuracy is {{ $value }}, below 70% threshold"
+          runbook_url: "https://runbooks.flashmm.com/ml-accuracy-drop"
+
+  # =============================================================================
+  # Infrastructure Alerts
+  # =============================================================================
+  - name: flashmm.infrastructure
+    interval: 60s
+    rules:
+      - alert: KubernetesNodeDown
+        expr: up{job="kubernetes-nodes"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: infrastructure
+          team: platform
+        annotations:
+          summary: "Kubernetes node is down"
+          description: "Node {{ $labels.instance }} has been down for more than 2 minutes"
+          runbook_url: "https://runbooks.flashmm.com/node-down"
+
+      - alert: KubernetesNodeHighMemory
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+          team: platform
+        annotations:
+          summary: "Kubernetes node high memory usage"
+          description: "Node {{ $labels.instance }} memory usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://runbooks.flashmm.com/node-high-memory"
+
+      - alert: KubernetesNodeHighCPU
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: infrastructure
+          team: platform
+        annotations:
+          summary: "Kubernetes node high CPU usage"
+          description: "Node {{ $labels.instance }} CPU usage is {{ $value }}%"
+          runbook_url: "https://runbooks.flashmm.com/node-high-cpu"
+
+      - alert: KubernetesPodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+          service: infrastructure
+          team: platform
+        annotations:
+          summary: "Pod is crash looping"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} is restarting frequently"
+          runbook_url: "https://runbooks.flashmm.com/pod-crash-loop"
+
+  # =============================================================================
+  # Database Alerts
+  # =============================================================================
+  - name: flashmm.database
+    interval: 60s
+    rules:
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: database
+          team: platform
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL instance {{ $labels.instance }} is down"
+          runbook_url: "https://runbooks.flashmm.com/postgres-down"
+
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_activity_count / pg_settings_max_connections > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          service: database
+          team: platform
+        annotations:
+          summary: "PostgreSQL high connection usage"
+          description: "PostgreSQL connection usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.flashmm.com/postgres-high-connections"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: cache
+          team: platform
+        annotations:
+          summary: "Redis is down"
+          description: "Redis instance {{ $labels.instance }} is down"
+          runbook_url: "https://runbooks.flashmm.com/redis-down"
+
+      - alert: RedisHighMemory
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 2m
+        labels:
+          severity: warning
+          service: cache
+          team: platform
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://runbooks.flashmm.com/redis-high-memory"
+
+  # =============================================================================
+  # External API Alerts
+  # =============================================================================
+  - name: flashmm.external
+    interval: 120s
+    rules:
+      - alert: SeiNetworkDown
+        expr: probe_success{instance="sei-rpc.polkachu.com:443"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: external-api
+          team: trading
+        annotations:
+          summary: "Sei network RPC is down"
+          description: "Cannot connect to Sei network RPC endpoint"
+          runbook_url: "https://runbooks.flashmm.com/sei-network-down"
+
+      - alert: CambrianAPIDown
+        expr: probe_success{instance="api.cambrian.com:443"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: external-api
+          team: trading
+        annotations:
+          summary: "Cambrian API is down"
+          description: "Cannot connect to Cambrian API"
+          runbook_url: "https://runbooks.flashmm.com/cambrian-api-down"
+
+      - alert: AzureOpenAIDown
+        expr: flashmm_azure_openai_status == 0
+        for: 3m
+        labels:
+          severity: warning
+          service: external-api
+          team: ml
+        annotations:
+          summary: "Azure OpenAI is down"
+          description: "Cannot connect to Azure OpenAI service"
+          runbook_url: "https://runbooks.flashmm.com/azure-openai-down"
+
+  # =============================================================================
+  # Security Alerts
+  # =============================================================================
+  - name: flashmm.security
+    interval: 60s
+    rules:
+      - alert: UnauthorizedAPIAccess
+        expr: increase(http_requests_total{status="401"}[5m]) > 10
+        for: 1m
+        labels:
+          severity: warning
+          service: security
+          team: security
+        annotations:
+          summary: "High number of unauthorized API requests"
+          description: "{{ $value }} unauthorized requests in the last 5 minutes"
+          runbook_url: "https://runbooks.flashmm.com/unauthorized-access"
+
+      - alert: SuspiciousActivity
+        expr: increase(http_requests_total{status="429"}[1m]) > 100
+        for: 30s
+        labels:
+          severity: critical
+          service: security
+          team: security
+        annotations:
+          summary: "Rate limiting triggered - possible attack"
+          description: "{{ $value }} rate-limited requests in the last minute"
+          runbook_url: "https://runbooks.flashmm.com/suspicious-activity"
+
+      - alert: TLSCertificateExpiring
+        expr: (probe_ssl_earliest_cert_expiry - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          service: security
+          team: platform
+        annotations:
+          summary: "TLS certificate expiring soon"
+          description: "TLS certificate for {{ $labels.instance }} expires in {{ $value }} days"
+          runbook_url: "https://runbooks.flashmm.com/cert-expiring"

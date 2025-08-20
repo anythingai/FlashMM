@@ -1,0 +1,448 @@
+# FlashMM Deployment Makefile
+# Unified commands for all deployment operations
+
+.PHONY: help dev staging prod clean test security backup restore scale monitor
+
+# Default environment
+ENVIRONMENT ?= development
+NAMESPACE ?= flashmm
+IMAGE_TAG ?= latest
+
+# Colors for output
+BLUE = \033[0;34m
+GREEN = \033[0;32m
+YELLOW = \033[1;33m
+RED = \033[0;31m
+NC = \033[0m
+
+# Help target
+help: ## Show this help message
+	@echo "FlashMM Deployment Commands"
+	@echo "=========================="
+	@echo ""
+	@echo "Quick Start:"
+	@echo "  make dev           - Start development environment"
+	@echo "  make staging       - Deploy to staging"
+	@echo "  make prod          - Deploy to production"
+	@echo ""
+	@echo "Available targets:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-18s$(NC) %s\n", $$1, $$2}'
+
+# =============================================================================
+# Environment Deployments
+# =============================================================================
+
+dev: ## Start development environment with Docker Compose
+	@echo -e "$(BLUE)🔧 Starting FlashMM development environment...$(NC)"
+	@cp .env.template .env.dev 2>/dev/null || true
+	@docker-compose -f docker-compose.dev.yml up -d
+	@echo -e "$(GREEN)✅ Development environment started$(NC)"
+	@echo -e "$(YELLOW)🌐 Access points:$(NC)"
+	@echo "  API: http://localhost:8000"
+	@echo "  Grafana: http://localhost:3000 (admin/dev_admin_123)"
+	@echo "  Redis UI: http://localhost:8081"
+
+staging: ## Deploy to staging environment
+	@echo -e "$(BLUE)🚀 Deploying FlashMM to staging...$(NC)"
+	@./environments/deploy.sh -e staging
+	@echo -e "$(GREEN)✅ Staging deployment completed$(NC)"
+	@./scripts/health-check.sh -e staging
+
+prod: ## Deploy to production environment (with safety checks)
+	@echo -e "$(BLUE)🏢 Deploying FlashMM to production...$(NC)"
+	@echo -e "$(YELLOW)⚠️  This will deploy to PRODUCTION. Continue? (y/N)$(NC)"
+	@read -r response && [ "$$response" = "y" ] || (echo "Deployment cancelled"; exit 1)
+	@./scripts/deploy-production.sh --image-tag $(IMAGE_TAG)
+	@echo -e "$(GREEN)✅ Production deployment completed$(NC)"
+	@./tests/deployment/run_all_tests.sh -e production --quick
+
+# =============================================================================
+# Infrastructure Management
+# =============================================================================
+
+infra-plan: ## Plan infrastructure changes with Terraform
+	@echo -e "$(BLUE)📋 Planning infrastructure changes...$(NC)"
+	@cd terraform && terraform init && terraform plan \
+		-var="environment=$(ENVIRONMENT)" \
+		-var="flashmm_image_tag=$(IMAGE_TAG)" \
+		-out=$(ENVIRONMENT).tfplan
+
+infra-apply: ## Apply infrastructure changes
+	@echo -e "$(BLUE)🏗️ Applying infrastructure changes...$(NC)"
+	@cd terraform && terraform apply $(ENVIRONMENT).tfplan
+	@echo -e "$(GREEN)✅ Infrastructure changes applied$(NC)"
+
+infra-destroy: ## Destroy infrastructure (USE WITH CAUTION)
+	@echo -e "$(RED)💥 This will DESTROY infrastructure for $(ENVIRONMENT). Continue? (y/N)$(NC)"
+	@read -r response && [ "$$response" = "y" ] || (echo "Destroy cancelled"; exit 1)
+	@cd terraform && terraform destroy -var="environment=$(ENVIRONMENT)"
+
+# =============================================================================
+# Application Management  
+# =============================================================================
+
+scale-up: ## Scale application up (+1 replica)
+	@echo -e "$(BLUE)📈 Scaling FlashMM up...$(NC)"
+	@./scripts/scale.sh up -e $(ENVIRONMENT)
+
+scale-down: ## Scale application down (-1 replica)  
+	@echo -e "$(BLUE)📉 Scaling FlashMM down...$(NC)"
+	@./scripts/scale.sh down -e $(ENVIRONMENT)
+
+scale-set: ## Scale to specific replica count (REPLICAS=n)
+	@echo -e "$(BLUE)🎯 Setting FlashMM replicas to $(REPLICAS)...$(NC)"
+	@./scripts/scale.sh set $(REPLICAS) -e $(ENVIRONMENT)
+
+scale-auto: ## Enable auto-scaling
+	@echo -e "$(BLUE)🤖 Enabling auto-scaling...$(NC)"
+	@./scripts/scale.sh auto -e $(ENVIRONMENT)
+
+rollback: ## Rollback to previous version
+	@echo -e "$(BLUE)🔄 Rolling back FlashMM...$(NC)"
+	@./scripts/rollback.sh -e $(ENVIRONMENT)
+
+restart: ## Restart FlashMM application
+	@echo -e "$(BLUE)🔄 Restarting FlashMM...$(NC)"
+	@kubectl rollout restart deployment/flashmm-app -n $(NAMESPACE)
+	@kubectl rollout status deployment/flashmm-app -n $(NAMESPACE)
+
+# =============================================================================
+# Monitoring and Health
+# =============================================================================
+
+health: ## Check system health
+	@echo -e "$(BLUE)🏥 Checking FlashMM health...$(NC)"
+	@./scripts/health-check.sh -e $(ENVIRONMENT)
+
+monitor: ## Open monitoring dashboards
+	@echo -e "$(BLUE)📊 Opening monitoring dashboards...$(NC)"
+	@echo "Grafana: https://grafana$(if [ "$(ENVIRONMENT)" != "production" ]; then echo ".$(ENVIRONMENT)"; fi).flashmm.com"
+	@echo "Prometheus: https://prometheus$(if [ "$(ENVIRONMENT)" != "production" ]; then echo ".$(ENVIRONMENT)"; fi).flashmm.com"
+
+logs: ## Show application logs
+	@echo -e "$(BLUE)📋 FlashMM application logs:$(NC)"
+	@kubectl logs -f deployment/flashmm-app -n $(NAMESPACE) --tail=100
+
+metrics: ## Show current metrics
+	@echo -e "$(BLUE)📈 FlashMM metrics:$(NC)"
+	@curl -s http://localhost:8000/metrics | head -20 || \
+	 kubectl run metrics-check --rm -i --restart=Never --image=curlimages/curl -n $(NAMESPACE) -- \
+	 curl -s http://flashmm-app:8000/metrics | head -20
+
+# =============================================================================
+# Testing and Validation
+# =============================================================================
+
+test: ## Run comprehensive test suite
+	@echo -e "$(BLUE)🧪 Running FlashMM test suite...$(NC)"
+	@./tests/deployment/run_all_tests.sh -e $(ENVIRONMENT) --full
+
+test-quick: ## Run quick validation tests
+	@echo -e "$(BLUE)⚡ Running quick tests...$(NC)"
+	@./tests/deployment/run_all_tests.sh -e $(ENVIRONMENT) --quick
+
+test-security: ## Run security compliance tests
+	@echo -e "$(BLUE)🔒 Running security tests...$(NC)"
+	@./security/scripts/security-scan.sh -e $(ENVIRONMENT) -t full
+
+test-performance: ## Run performance and load tests
+	@echo -e "$(BLUE)🏎️ Running performance tests...$(NC)"
+	@python3 tests/performance/load_test.py --kubernetes --namespace $(NAMESPACE)
+
+# =============================================================================
+# Security Operations
+# =============================================================================
+
+security: ## Run security compliance scan
+	@echo -e "$(BLUE)🛡️ Running security compliance scan...$(NC)"
+	@./security/scripts/security-scan.sh -e $(ENVIRONMENT) -t compliance
+
+security-fix: ## Run security scan with automatic fixes
+	@echo -e "$(BLUE)🔧 Running security scan with fixes...$(NC)"
+	@./security/scripts/security-scan.sh -e $(ENVIRONMENT) --fix
+
+audit: ## Generate security audit report
+	@echo -e "$(BLUE)📋 Generating security audit report...$(NC)"
+	@./security/scripts/security-scan.sh -e $(ENVIRONMENT) -t compliance -f html > security-audit.html
+	@echo -e "$(GREEN)✅ Security audit report: security-audit.html$(NC)"
+
+# =============================================================================
+# Backup and Recovery
+# =============================================================================
+
+backup: ## Create full system backup
+	@echo -e "$(BLUE)💾 Creating FlashMM backup...$(NC)"
+	@./scripts/backup.sh -e $(ENVIRONMENT) -t full
+
+backup-data: ## Backup data only
+	@echo -e "$(BLUE)💾 Creating data backup...$(NC)"
+	@./scripts/backup.sh -e $(ENVIRONMENT) -t data
+
+backup-config: ## Backup configuration only
+	@echo -e "$(BLUE)💾 Creating configuration backup...$(NC)"
+	@./scripts/backup.sh -e $(ENVIRONMENT) -t config
+
+restore: ## Restore from backup (BACKUP=backup_id)
+	@echo -e "$(BLUE)📂 Restoring from backup $(BACKUP)...$(NC)"
+	@./scripts/restore.sh -e $(ENVIRONMENT) -b $(BACKUP)
+
+list-backups: ## List available backups
+	@echo -e "$(BLUE)📋 Available backups:$(NC)"
+	@aws s3 ls s3://flashmm-backups-$(ENVIRONMENT)/ || echo "No backups found or AWS CLI not configured"
+
+# =============================================================================
+# Maintenance Operations
+# =============================================================================
+
+update: ## Update FlashMM to latest version
+	@echo -e "$(BLUE)🔄 Updating FlashMM...$(NC)"
+	@helm upgrade flashmm ./helm/flashmm/ \
+		--set global.imageTag=latest \
+		-f environments/$(ENVIRONMENT)/values.yaml \
+		-n $(NAMESPACE)
+	@kubectl rollout status deployment/flashmm-app -n $(NAMESPACE)
+
+clean: ## Clean up unused resources
+	@echo -e "$(BLUE)🧹 Cleaning up resources...$(NC)"
+	@docker system prune -f
+	@kubectl delete pods -n $(NAMESPACE) --field-selector=status.phase=Succeeded
+	@kubectl delete pods -n $(NAMESPACE) --field-selector=status.phase=Failed
+
+clean-all: ## Clean up all Docker resources (USE WITH CAUTION)
+	@echo -e "$(YELLOW)⚠️ This will remove ALL Docker resources. Continue? (y/N)$(NC)"
+	@read -r response && [ "$$response" = "y" ] || (echo "Clean cancelled"; exit 1)
+	@docker system prune -a -f --volumes
+
+# =============================================================================
+# Development Helpers
+# =============================================================================
+
+dev-logs: ## Show development logs
+	@docker-compose -f docker-compose.dev.yml logs -f flashmm
+
+dev-shell: ## Open shell in development container
+	@docker-compose -f docker-compose.dev.yml exec flashmm /bin/bash
+
+dev-stop: ## Stop development environment
+	@docker-compose -f docker-compose.dev.yml down
+
+dev-restart: ## Restart development environment
+	@docker-compose -f docker-compose.dev.yml restart flashmm
+
+# =============================================================================
+# Status and Information
+# =============================================================================
+
+status: ## Show deployment status
+	@echo -e "$(BLUE)📊 FlashMM Deployment Status$(NC)"
+	@echo "Environment: $(ENVIRONMENT)"
+	@echo "Namespace: $(NAMESPACE)"
+	@echo ""
+	@kubectl get pods -n $(NAMESPACE) -l app.kubernetes.io/name=flashmm 2>/dev/null || \
+		docker-compose ps 2>/dev/null || \
+		echo "No deployment found"
+
+info: ## Show environment information
+	@echo -e "$(BLUE)ℹ️ FlashMM Environment Information$(NC)"
+	@echo "Environment: $(ENVIRONMENT)"
+	@echo "Namespace: $(NAMESPACE)"
+	@echo "Image Tag: $(IMAGE_TAG)"
+	@echo ""
+	@echo "Available commands:"
+	@make help
+
+version: ## Show deployed version
+	@echo -e "$(BLUE)🏷️ FlashMM Version Information$(NC)"
+	@kubectl get deployment flashmm-app -n $(NAMESPACE) \
+		-o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || \
+		docker-compose -f docker-compose.dev.yml images flashmm 2>/dev/null || \
+		echo "Version information not available"
+
+# =============================================================================
+# Utility Targets
+# =============================================================================
+
+shell: ## Open shell in FlashMM pod
+	@echo -e "$(BLUE)🐚 Opening shell in FlashMM pod...$(NC)"
+	@kubectl exec -it -n $(NAMESPACE) deployment/flashmm-app -- /bin/bash
+
+port-forward: ## Forward FlashMM port to localhost:8000
+	@echo -e "$(BLUE)🔗 Port forwarding FlashMM to localhost:8000...$(NC)"
+	@kubectl port-forward -n $(NAMESPACE) service/flashmm-app 8000:8000
+
+debug: ## Show debugging information
+	@echo -e "$(BLUE)🐛 FlashMM Debug Information$(NC)"
+	@echo "Pods:"
+	@kubectl get pods -n $(NAMESPACE) -o wide
+	@echo ""
+	@echo "Events:"
+	@kubectl get events -n $(NAMESPACE) --sort-by='.lastTimestamp' | tail -10
+	@echo ""
+	@echo "Resource Usage:"
+	@kubectl top pods -n $(NAMESPACE) 2>/dev/null || echo "Resource metrics not available"
+
+# =============================================================================
+# Advanced Operations
+# =============================================================================
+
+chaos-test: ## Run chaos engineering tests (Staging only)
+	@if [ "$(ENVIRONMENT)" = "production" ]; then \
+		echo -e "$(RED)❌ Chaos testing not allowed in production$(NC)"; \
+		exit 1; \
+	fi
+	@echo -e "$(BLUE)🌪️ Running chaos engineering tests...$(NC)"
+	@kubectl delete pod -n $(NAMESPACE) -l app.kubernetes.io/name=flashmm --force --grace-period=0 | head -1
+	@sleep 30
+	@./scripts/health-check.sh -e $(ENVIRONMENT)
+
+disaster-recovery-test: ## Test disaster recovery procedures
+	@echo -e "$(BLUE)☄️ Testing disaster recovery...$(NC)"
+	@echo "1. Creating backup..."
+	@./scripts/backup.sh -e $(ENVIRONMENT) -t full --verify
+	@echo "2. Simulating failure scenario..."
+	@kubectl scale deployment flashmm-app -n $(NAMESPACE) --replicas=0
+	@sleep 30
+	@echo "3. Restoring service..."
+	@kubectl scale deployment flashmm-app -n $(NAMESPACE) --replicas=3
+	@kubectl rollout status deployment/flashmm-app -n $(NAMESPACE)
+	@./scripts/health-check.sh -e $(ENVIRONMENT)
+	@echo -e "$(GREEN)✅ Disaster recovery test completed$(NC)"
+
+load-test: ## Run load tests against deployment  
+	@echo -e "$(BLUE)🏋️ Running load tests...$(NC)"
+	@python3 tests/performance/load_test.py \
+		--base-url "$(if [ "$(ENVIRONMENT)" = "production" ]; then echo "https://api.flashmm.com"; else echo "http://localhost:8000"; fi)" \
+		--users 50 --duration 120
+
+# =============================================================================
+# Maintenance Targets
+# =============================================================================
+
+maintenance-mode: ## Enable maintenance mode
+	@echo -e "$(YELLOW)🔧 Enabling maintenance mode...$(NC)"
+	@kubectl patch ingress flashmm-ingress -n $(NAMESPACE) -p \
+		'{"metadata":{"annotations":{"nginx.ingress.kubernetes.io/configuration-snippet":"return 503 \"FlashMM is under maintenance\";"}}}'
+	@echo -e "$(GREEN)✅ Maintenance mode enabled$(NC)"
+
+maintenance-off: ## Disable maintenance mode
+	@echo -e "$(BLUE)🟢 Disabling maintenance mode...$(NC)"
+	@kubectl annotate ingress flashmm-ingress -n $(NAMESPACE) \
+		nginx.ingress.kubernetes.io/configuration-snippet- --overwrite
+	@echo -e "$(GREEN)✅ Maintenance mode disabled$(NC)"
+
+cert-renew: ## Renew TLS certificates
+	@echo -e "$(BLUE)🔐 Renewing TLS certificates...$(NC)"
+	@kubectl annotate certificate flashmm-tls -n $(NAMESPACE) \
+		cert-manager.io/issue-temporary-certificate=true --overwrite
+
+# =============================================================================
+# Monitoring and Alerting
+# =============================================================================
+
+alerts: ## Show active alerts
+	@echo -e "$(BLUE)🚨 Active Alerts:$(NC)"
+	@curl -s http://localhost:9093/api/v1/alerts 2>/dev/null | jq '.data[] | {alertname: .labels.alertname, status: .status.state, since: .activeAt}' || \
+		echo "AlertManager not accessible locally. Check Kubernetes deployment."
+
+silence-alerts: ## Silence alerts for maintenance (DURATION=1h)
+	@echo -e "$(YELLOW)🔇 Silencing alerts for $(DURATION:-1h)...$(NC)"
+	@curl -X POST http://localhost:9093/api/v1/silences \
+		-H "Content-Type: application/json" \
+		-d '{"matchers":[{"name":"service","value":"flashmm"}],"startsAt":"$(shell date -u +%Y-%m-%dT%H:%M:%SZ)","endsAt":"$(shell date -u -d "+$(DURATION:-1h)" +%Y-%m-%dT%H:%M:%SZ)","comment":"Maintenance window"}' || \
+		echo "AlertManager not accessible"
+
+# =============================================================================
+# Data Management
+# =============================================================================
+
+db-console: ## Open database console
+	@echo -e "$(BLUE)🗄️ Opening database console...$(NC)"
+	@kubectl exec -it -n $(NAMESPACE) deployment/postgres -- \
+		psql -U flashmm -d flashmm_$(ENVIRONMENT)
+
+redis-console: ## Open Redis console
+	@echo -e "$(BLUE)📱 Opening Redis console...$(NC)"
+	@kubectl exec -it -n $(NAMESPACE) deployment/redis -- redis-cli
+
+backup-all: ## Create comprehensive backup
+	@echo -e "$(BLUE)💾 Creating comprehensive backup...$(NC)"
+	@./scripts/backup.sh -e $(ENVIRONMENT) -t full --verify
+	@echo -e "$(GREEN)✅ Backup completed and verified$(NC)"
+
+# =============================================================================
+# Development Workflow
+# =============================================================================
+
+build: ## Build FlashMM container image
+	@echo -e "$(BLUE)🔨 Building FlashMM container...$(NC)"
+	@docker build -f Dockerfile.production --target production -t flashmm:$(IMAGE_TAG) .
+	@echo -e "$(GREEN)✅ Container built: flashmm:$(IMAGE_TAG)$(NC)"
+
+push: ## Push container image to registry
+	@echo -e "$(BLUE)📤 Pushing container to registry...$(NC)"
+	@docker tag flashmm:$(IMAGE_TAG) ghcr.io/flashmm/flashmm:$(IMAGE_TAG)
+	@docker push ghcr.io/flashmm/flashmm:$(IMAGE_TAG)
+
+lint: ## Lint deployment configurations
+	@echo -e "$(BLUE)🔍 Linting deployment configurations...$(NC)"
+	@helm lint ./helm/flashmm/
+	@kubeval k8s/*.yaml
+	@terraform fmt -check terraform/
+
+validate: ## Validate all configurations
+	@echo -e "$(BLUE)✅ Validating configurations...$(NC)"
+	@make lint
+	@terraform validate terraform/
+	@echo -e "$(GREEN)✅ All configurations valid$(NC)"
+
+# =============================================================================
+# Cleanup and Reset
+# =============================================================================
+
+reset-dev: ## Reset development environment
+	@echo -e "$(BLUE)🔄 Resetting development environment...$(NC)"
+	@docker-compose -f docker-compose.dev.yml down -v
+	@docker-compose -f docker-compose.dev.yml up -d
+	@echo -e "$(GREEN)✅ Development environment reset$(NC)"
+
+clean-namespace: ## Clean up Kubernetes namespace
+	@echo -e "$(YELLOW)⚠️ This will delete all resources in $(NAMESPACE). Continue? (y/N)$(NC)"
+	@read -r response && [ "$$response" = "y" ] || (echo "Clean cancelled"; exit 1)
+	@kubectl delete namespace $(NAMESPACE) --ignore-not-found=true
+	@echo -e "$(GREEN)✅ Namespace $(NAMESPACE) cleaned$(NC)"
+
+# =============================================================================
+# Help and Documentation
+# =============================================================================
+
+docs: ## Open deployment documentation
+	@echo -e "$(BLUE)📚 FlashMM Deployment Documentation$(NC)"
+	@echo "Main guide: docs/deployment/README.md"
+	@echo "Quick start: DEPLOYMENT.md"
+	@echo "Architecture: architecture-overview.md"
+
+examples: ## Show deployment examples
+	@echo -e "$(BLUE)💡 FlashMM Deployment Examples$(NC)"
+	@echo ""
+	@echo "Development:"
+	@echo "  make dev"
+	@echo ""
+	@echo "Staging deployment:"
+	@echo "  make staging"
+	@echo "  make test-quick ENVIRONMENT=staging"
+	@echo ""
+	@echo "Production deployment:"
+	@echo "  make infra-plan ENVIRONMENT=production"
+	@echo "  make infra-apply ENVIRONMENT=production"
+	@echo "  make prod"
+	@echo "  make test ENVIRONMENT=production"
+	@echo ""
+	@echo "Maintenance operations:"
+	@echo "  make backup ENVIRONMENT=production"
+	@echo "  make scale-up ENVIRONMENT=production"
+	@echo "  make health ENVIRONMENT=production"
+
+# Variables for easy customization
+export ENVIRONMENT
+export NAMESPACE  
+export IMAGE_TAG
