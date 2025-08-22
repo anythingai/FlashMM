@@ -8,12 +8,9 @@ and human-readable output for development.
 import logging
 import logging.config
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 import structlog
-from pythonjsonlogger import jsonlogger
-
-from flashmm.config.constants import LOGGING_CONFIG
 
 
 def setup_logging(
@@ -22,14 +19,14 @@ def setup_logging(
     enable_json: bool = False,
 ) -> None:
     """Setup structured logging configuration."""
-    
+
     # Configure standard library logging
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
         level=getattr(logging, log_level.upper()),
     )
-    
+
     # Configure structlog processors
     processors = [
         structlog.stdlib.filter_by_level,
@@ -41,13 +38,13 @@ def setup_logging(
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
     ]
-    
+
     # Add environment-specific processors
     if environment == "production" or enable_json:
         processors.append(structlog.processors.JSONRenderer())
     else:
         processors.append(structlog.dev.ConsoleRenderer(colors=True))
-    
+
     # Configure structlog
     structlog.configure(
         processors=processors,
@@ -64,10 +61,10 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
 
 class TradingEventLogger:
     """Specialized logger for trading events with structured data."""
-    
+
     def __init__(self):
         self.logger = get_logger("flashmm.trading")
-    
+
     async def log_order_event(
         self,
         event_type: str,
@@ -89,7 +86,7 @@ class TradingEventLogger:
             size=size,
             **kwargs
         )
-    
+
     async def log_fill_event(
         self,
         order_id: str,
@@ -111,7 +108,7 @@ class TradingEventLogger:
             fee=fee,
             **kwargs
         )
-    
+
     async def log_pnl_event(
         self,
         symbol: str,
@@ -133,10 +130,10 @@ class TradingEventLogger:
 
 class PerformanceLogger:
     """Logger for performance metrics and latency tracking."""
-    
+
     def __init__(self):
         self.logger = get_logger("flashmm.performance")
-    
+
     async def log_latency(
         self,
         operation: str,
@@ -152,7 +149,7 @@ class PerformanceLogger:
             success=success,
             **kwargs
         )
-    
+
     async def log_throughput(
         self,
         operation: str,
@@ -170,7 +167,7 @@ class PerformanceLogger:
             rate_per_second=rate,
             **kwargs
         )
-    
+
     async def log_system_metrics(
         self,
         cpu_percent: float,
@@ -190,16 +187,16 @@ class PerformanceLogger:
 
 class SecurityLogger:
     """Logger for security events and audit trails."""
-    
+
     def __init__(self):
         self.logger = get_logger("flashmm.security")
-    
+
     async def log_authentication_event(
         self,
         event_type: str,
         user: str,
         success: bool,
-        ip_address: Optional[str] = None,
+        ip_address: str | None = None,
         **kwargs
     ) -> None:
         """Log authentication events."""
@@ -211,7 +208,7 @@ class SecurityLogger:
             ip_address=ip_address,
             **kwargs
         )
-    
+
     async def log_authorization_event(
         self,
         user: str,
@@ -229,12 +226,12 @@ class SecurityLogger:
             success=success,
             **kwargs
         )
-    
+
     async def log_critical_event(
         self,
         event_type: str,
         user: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         **kwargs
     ) -> None:
         """Log critical security events."""
@@ -249,16 +246,16 @@ class SecurityLogger:
 
 class DataLogger:
     """Logger for data ingestion and processing events."""
-    
+
     def __init__(self):
         self.logger = get_logger("flashmm.data")
-    
+
     async def log_websocket_event(
         self,
         event_type: str,
         symbol: str,
         message_type: str,
-        latency_ms: Optional[float] = None,
+        latency_ms: float | None = None,
         **kwargs
     ) -> None:
         """Log WebSocket data events."""
@@ -270,12 +267,12 @@ class DataLogger:
             latency_ms=latency_ms,
             **kwargs
         )
-    
+
     async def log_data_validation_event(
         self,
         validation_type: str,
         success: bool,
-        error_details: Optional[str] = None,
+        error_details: str | None = None,
         **kwargs
     ) -> None:
         """Log data validation events."""

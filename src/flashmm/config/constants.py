@@ -5,10 +5,10 @@ Contains all default configuration values embedded in the application code.
 These serve as the base layer in the hierarchical configuration system.
 """
 
-from typing import Dict, Any
+from typing import Any
 
 # Default configuration values
-DEFAULT_CONFIG: Dict[str, Any] = {
+DEFAULT_CONFIG: dict[str, Any] = {
     "app": {
         "name": "FlashMM",
         "version": "1.0.0",
@@ -17,7 +17,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "environment": "development",
     },
     "api": {
-        "host": "0.0.0.0",
+        # Default to localhost for security - override in production config as needed
+        # Binding to 0.0.0.0 exposes the service on all network interfaces
+        "host": "127.0.0.1",  # More secure default than 0.0.0.0
         "port": 8000,
         "cors_origins": ["*"],
         "rate_limit_per_minute": 60,

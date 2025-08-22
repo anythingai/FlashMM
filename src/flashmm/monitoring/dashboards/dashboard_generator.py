@@ -5,16 +5,15 @@ Generate dynamic Grafana dashboards based on system configuration, user roles,
 and market-specific requirements with customizable layouts and permissions.
 """
 
-import asyncio
 import json
-from typing import Dict, Any, List, Optional, Union
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
-from dataclasses import dataclass, field, asdict
+from typing import Any
 
 from flashmm.config.settings import get_config
+from flashmm.monitoring.dashboards.grafana_client import DashboardConfig, GrafanaClient
 from flashmm.utils.logging import get_logger
-from flashmm.monitoring.dashboards.grafana_client import GrafanaClient, DashboardConfig
 
 logger = get_logger(__name__)
 
@@ -26,6 +25,7 @@ class UserRole(Enum):
     RISK_MANAGER = "risk_manager"
     VIEWER = "viewer"
     PUBLIC = "public"
+    EXECUTIVE = "executive"
 
 
 class DashboardTemplate(Enum):
@@ -46,12 +46,12 @@ class PanelConfig:
     title: str
     type: str
     query: str
-    grid_pos: Dict[str, int]
-    field_config: Dict[str, Any] = field(default_factory=dict)
-    options: Dict[str, Any] = field(default_factory=dict)
-    targets: List[Dict[str, Any]] = field(default_factory=list)
-    thresholds: List[Dict[str, Any]] = field(default_factory=list)
-    alert_rules: List[str] = field(default_factory=list)
+    grid_pos: dict[str, int]
+    field_config: dict[str, Any] = field(default_factory=dict)
+    options: dict[str, Any] = field(default_factory=dict)
+    targets: list[dict[str, Any]] = field(default_factory=list)
+    thresholds: list[dict[str, Any]] = field(default_factory=list)
+    alert_rules: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -71,17 +71,17 @@ class RolePermissions:
     can_share: bool = False
     can_export: bool = False
     can_create_alerts: bool = False
-    visible_panels: List[str] = field(default_factory=list)
-    hidden_panels: List[str] = field(default_factory=list)
+    visible_panels: list[str] = field(default_factory=list)
+    hidden_panels: list[str] = field(default_factory=list)
 
 
 class DashboardGenerator:
     """Dynamic dashboard generator with role-based customization."""
-    
+
     def __init__(self, grafana_client: GrafanaClient):
         self.grafana_client = grafana_client
         self.config = get_config()
-        
+
         # Role permissions mapping
         self.role_permissions = {
             UserRole.ADMIN: RolePermissions(
@@ -130,13 +130,13 @@ class DashboardGenerator:
                 ]
             )
         }
-        
+
         # Panel definitions
         self.panel_definitions = self._initialize_panel_definitions()
-        
+
         logger.info("DashboardGenerator initialized")
-    
-    def _initialize_panel_definitions(self) -> Dict[str, PanelConfig]:
+
+    def _initialize_panel_definitions(self) -> dict[str, PanelConfig]:
         """Initialize panel definitions."""
         return {
             "spread_improvement": PanelConfig(
@@ -164,7 +164,7 @@ class DashboardGenerator:
                     {"field": "spread_improvement_percent", "value": 20, "condition": "lt", "severity": "warning"}
                 ]
             ),
-            
+
             "pnl": PanelConfig(
                 id=2,
                 title="Profit & Loss",
@@ -182,7 +182,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "volume": PanelConfig(
                 id=3,
                 title="Trading Volume",
@@ -196,7 +196,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "fill_rate": PanelConfig(
                 id=4,
                 title="Fill Rate",
@@ -218,7 +218,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "inventory": PanelConfig(
                 id=5,
                 title="Inventory Utilization",
@@ -240,7 +240,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "latency": PanelConfig(
                 id=6,
                 title="Order Latency",
@@ -262,7 +262,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "risk_score": PanelConfig(
                 id=7,
                 title="Risk Score",
@@ -284,7 +284,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "var": PanelConfig(
                 id=8,
                 title="Value at Risk (95%)",
@@ -298,7 +298,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "ml_predictions": PanelConfig(
                 id=9,
                 title="ML Prediction Accuracy",
@@ -312,7 +312,7 @@ class DashboardGenerator:
                     }
                 }
             ),
-            
+
             "system_health": PanelConfig(
                 id=10,
                 title="System Health",
@@ -329,41 +329,41 @@ class DashboardGenerator:
                 }
             )
         }
-    
+
     async def generate_dashboard(
         self,
         template: DashboardTemplate,
         role: UserRole,
-        symbols: List[str] = None,
-        custom_config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
+        symbols: list[str] | None = None,
+        custom_config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Generate a dashboard based on template and user role."""
         try:
             # Get role permissions
             permissions = self.role_permissions.get(role, self.role_permissions[UserRole.VIEWER])
-            
+
             # Create dashboard config
             dashboard_config = self._create_dashboard_config(template, role, symbols)
-            
+
             # Select panels based on template and permissions
             selected_panels = self._select_panels(template, permissions)
-            
+
             # Generate panels
             panels = []
             panel_id = 1
-            
+
             for panel_name in selected_panels:
                 if panel_name in self.panel_definitions:
                     panel_config = self.panel_definitions[panel_name]
-                    
+
                     # Customize panel for role and symbols
                     customized_panel = self._customize_panel(panel_config, role, symbols, panel_id)
                     panels.append(customized_panel)
                     panel_id += 1
-            
+
             # Arrange panels in layout
             arranged_panels = self._arrange_panels(panels, template)
-            
+
             # Create dashboard JSON
             dashboard_json = self._create_dashboard_json(
                 dashboard_config,
@@ -371,23 +371,23 @@ class DashboardGenerator:
                 permissions,
                 custom_config
             )
-            
+
             logger.info(f"Generated {template.value} dashboard for {role.value} with {len(panels)} panels")
             return dashboard_json
-            
+
         except Exception as e:
             logger.error(f"Failed to generate dashboard: {e}")
             raise
-    
+
     def _create_dashboard_config(
         self,
         template: DashboardTemplate,
         role: UserRole,
-        symbols: List[str]
+        symbols: list[str] | None
     ) -> DashboardConfig:
         """Create dashboard configuration."""
         symbol_suffix = f"-{'-'.join(symbols)}" if symbols else ""
-        
+
         title_map = {
             DashboardTemplate.TRADING_OVERVIEW: f"Trading Overview - {role.value.title()}",
             DashboardTemplate.RISK_MONITORING: f"Risk Monitoring - {role.value.title()}",
@@ -397,7 +397,7 @@ class DashboardGenerator:
             DashboardTemplate.EXECUTIVE_SUMMARY: f"Executive Summary - {role.value.title()}",
             DashboardTemplate.OPERATIONAL: f"Operational Dashboard - {role.value.title()}"
         }
-        
+
         return DashboardConfig(
             title=title_map.get(template, f"FlashMM Dashboard - {role.value.title()}"),
             uid=f"flashmm-{template.value}-{role.value}{symbol_suffix}",
@@ -408,8 +408,8 @@ class DashboardGenerator:
             public_access=(role == UserRole.PUBLIC),
             description=f"FlashMM {template.value} dashboard customized for {role.value}"
         )
-    
-    def _select_panels(self, template: DashboardTemplate, permissions: RolePermissions) -> List[str]:
+
+    def _select_panels(self, template: DashboardTemplate, permissions: RolePermissions) -> list[str]:
         """Select panels based on template and permissions."""
         template_panels = {
             DashboardTemplate.TRADING_OVERVIEW: [
@@ -434,27 +434,27 @@ class DashboardGenerator:
                 "system_health", "latency", "inventory", "fill_rate"
             ]
         }
-        
+
         base_panels = template_panels.get(template, [])
-        
+
         # Filter panels based on permissions
         if "*" in permissions.visible_panels:
             return base_panels
-        
+
         filtered_panels = [
             panel for panel in base_panels
             if panel in permissions.visible_panels and panel not in permissions.hidden_panels
         ]
-        
+
         return filtered_panels
-    
+
     def _customize_panel(
         self,
         panel_config: PanelConfig,
         role: UserRole,
-        symbols: List[str],
+        symbols: list[str] | None,
         panel_id: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Customize panel for specific role and symbols."""
         panel = {
             "id": panel_id,
@@ -470,13 +470,13 @@ class DashboardGenerator:
                 }
             ]
         }
-        
+
         # Role-specific customizations
         if role == UserRole.PUBLIC:
             # Simplify panels for public view
             panel["fieldConfig"]["defaults"] = panel["fieldConfig"].get("defaults", {})
             panel["fieldConfig"]["defaults"]["custom"] = {"hideFrom": {"tooltip": True}}
-        
+
         elif role == UserRole.RISK_MANAGER:
             # Add risk-specific annotations
             if panel_config.title in ["Inventory Utilization", "Risk Score"]:
@@ -486,69 +486,69 @@ class DashboardGenerator:
                     "noDataState": "no_data",
                     "frequency": "10s"
                 }
-        
+
         return panel
-    
-    def _customize_query(self, base_query: str, symbols: List[str]) -> str:
+
+    def _customize_query(self, base_query: str, symbols: list[str] | None) -> str:
         """Customize query with symbol filtering."""
         if not symbols:
             return base_query
-        
+
         # Add symbol filtering to query
         symbol_filter = ' |> filter(fn: (r) => ' + ' or '.join([f'r.symbol == "{symbol}"' for symbol in symbols]) + ')'
-        
+
         if '|> filter(' in base_query:
             # Insert after existing filters
             parts = base_query.split('|> filter(')
             if len(parts) > 1:
                 return parts[0] + '|> filter(' + parts[1] + symbol_filter
-        
+
         return base_query + symbol_filter
-    
-    def _arrange_panels(self, panels: List[Dict[str, Any]], template: DashboardTemplate) -> List[Dict[str, Any]]:
+
+    def _arrange_panels(self, panels: list[dict[str, Any]], template: DashboardTemplate) -> list[dict[str, Any]]:
         """Arrange panels in optimal layout."""
         layout = DashboardLayout()
-        
+
         if template == DashboardTemplate.EXECUTIVE_SUMMARY:
             # Executive layout: larger panels, less dense
             layout = DashboardLayout(rows=2, columns=24, panel_height=12)
         elif template == DashboardTemplate.OPERATIONAL:
             # Operational layout: compact, more panels
             layout = DashboardLayout(rows=6, columns=24, panel_height=6)
-        
+
         arranged_panels = []
         current_x = 0
         current_y = 0
         panels_per_row = layout.columns // (layout.columns // min(len(panels), 4))
-        
-        for i, panel in enumerate(panels):
+
+        for _i, panel in enumerate(panels):
             if layout.auto_arrange:
                 # Auto-arrange panels
                 panel_width = layout.columns // panels_per_row
-                
+
                 panel["gridPos"] = {
                     "h": layout.panel_height,
                     "w": panel_width,
                     "x": current_x,
                     "y": current_y
                 }
-                
+
                 current_x += panel_width
                 if current_x >= layout.columns:
                     current_x = 0
                     current_y += layout.panel_height
-            
+
             arranged_panels.append(panel)
-        
+
         return arranged_panels
-    
+
     def _create_dashboard_json(
         self,
         config: DashboardConfig,
-        panels: List[Dict[str, Any]],
+        panels: list[dict[str, Any]],
         permissions: RolePermissions,
-        custom_config: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
+        custom_config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Create complete dashboard JSON."""
         dashboard_json = {
             "dashboard": {
@@ -584,14 +584,14 @@ class DashboardGenerator:
             "overwrite": True,
             "message": f"Generated dashboard for {config.title}"
         }
-        
+
         # Apply custom configuration
         if custom_config:
             dashboard_json["dashboard"].update(custom_config)
-        
+
         return dashboard_json
-    
-    def _create_template_variables(self) -> List[Dict[str, Any]]:
+
+    def _create_template_variables(self) -> list[dict[str, Any]]:
         """Create template variables for dashboard."""
         return [
             {
@@ -618,11 +618,11 @@ class DashboardGenerator:
                 ]
             }
         ]
-    
-    def _create_annotations(self, permissions: RolePermissions) -> List[Dict[str, Any]]:
+
+    def _create_annotations(self, permissions: RolePermissions) -> list[dict[str, Any]]:
         """Create annotations for dashboard."""
         annotations = []
-        
+
         if permissions.can_create_alerts:
             annotations.append({
                 "name": "Alerts",
@@ -632,7 +632,7 @@ class DashboardGenerator:
                 "iconColor": "red",
                 "type": "dashboard"
             })
-        
+
         annotations.append({
             "name": "Trading Events",
             "datasource": "FlashMM-InfluxDB",
@@ -641,10 +641,10 @@ class DashboardGenerator:
             "iconColor": "blue",
             "query": 'from(bucket: "events") |> range(start: -1h) |> filter(fn: (r) => r._measurement == "trading_events")'
         })
-        
+
         return annotations
-    
-    def _create_dashboard_links(self, config: DashboardConfig) -> List[Dict[str, Any]]:
+
+    def _create_dashboard_links(self, config: DashboardConfig) -> list[dict[str, Any]]:
         """Create dashboard navigation links."""
         return [
             {
@@ -661,12 +661,12 @@ class DashboardGenerator:
                 "targetBlank": True
             }
         ]
-    
+
     async def generate_market_specific_dashboard(
         self,
         symbol: str,
         role: UserRole = UserRole.TRADER
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate market-specific dashboard."""
         return await self.generate_dashboard(
             template=DashboardTemplate.MARKET_SPECIFIC,
@@ -678,11 +678,11 @@ class DashboardGenerator:
                 "refresh": "5s"
             }
         )
-    
-    async def generate_role_dashboard_suite(self, role: UserRole) -> List[Dict[str, Any]]:
+
+    async def generate_role_dashboard_suite(self, role: UserRole) -> list[dict[str, Any]]:
         """Generate complete dashboard suite for a role."""
         dashboards = []
-        
+
         # Template mapping by role
         role_templates = {
             UserRole.ADMIN: [
@@ -707,20 +707,20 @@ class DashboardGenerator:
                 DashboardTemplate.EXECUTIVE_SUMMARY
             ]
         }
-        
+
         templates = role_templates.get(role, [DashboardTemplate.TRADING_OVERVIEW])
-        
+
         for template in templates:
             try:
                 dashboard = await self.generate_dashboard(template, role)
                 dashboards.append(dashboard)
             except Exception as e:
                 logger.error(f"Failed to generate {template.value} dashboard for {role.value}: {e}")
-        
+
         logger.info(f"Generated {len(dashboards)} dashboards for role {role.value}")
         return dashboards
-    
-    async def export_dashboard_template(self, dashboard_json: Dict[str, Any]) -> str:
+
+    async def export_dashboard_template(self, dashboard_json: dict[str, Any]) -> str:
         """Export dashboard as reusable template."""
         template = {
             "template_version": "1.0",
@@ -732,15 +732,15 @@ class DashboardGenerator:
                 "time_range": "${time_range}"
             }
         }
-        
+
         return json.dumps(template, indent=2)
 
 
 # Global dashboard generator instance
-_dashboard_generator: Optional[DashboardGenerator] = None
+_dashboard_generator: DashboardGenerator | None = None
 
 
-async def get_dashboard_generator(grafana_client: GrafanaClient = None) -> DashboardGenerator:
+async def get_dashboard_generator(grafana_client: GrafanaClient | None = None) -> DashboardGenerator:
     """Get global dashboard generator instance."""
     global _dashboard_generator
     if _dashboard_generator is None:

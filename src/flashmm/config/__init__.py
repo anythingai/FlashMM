@@ -8,13 +8,13 @@ Provides hierarchical configuration management with support for:
 - Runtime configuration updates via Redis
 """
 
-from flashmm.config.settings import ConfigManager, get_config
 from flashmm.config.constants import DEFAULT_CONFIG
 from flashmm.config.environments import detect_environment
+from flashmm.config.settings import ConfigManager, get_config
 
 __all__ = [
     "ConfigManager",
-    "get_config", 
+    "get_config",
     "DEFAULT_CONFIG",
     "detect_environment",
 ]

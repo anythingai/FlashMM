@@ -6,33 +6,34 @@ Common utilities, mocks, and helper functions for testing risk components.
 
 import asyncio
 import random
-from decimal import Decimal
+import secrets
 from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
-from unittest.mock import AsyncMock, Mock
+from decimal import Decimal
+from typing import Any
+from unittest.mock import AsyncMock
 
 
 def create_mock_market_data(
-    symbols: List[str] = None,
+    symbols: list[str] | None = None,
     base_price: float = 50000.0,
     price_change_pct: float = 0.0,
     volume_multiplier: float = 1.0,
-    timestamp: Optional[datetime] = None
-) -> Dict[str, Any]:
+    timestamp: datetime | None = None
+) -> dict[str, Any]:
     """Create mock market data for testing."""
     if symbols is None:
         symbols = ['BTC-USD', 'ETH-USD']
-    
+
     if timestamp is None:
         timestamp = datetime.now()
-    
+
     price_data = {}
     volume_data = {}
-    
+
     for i, symbol in enumerate(symbols):
         current_price = base_price * (1 + i * 0.1) * (1 + price_change_pct / 100)
         previous_price = base_price * (1 + i * 0.1)
-        
+
         price_data[symbol] = {
             'current_price': current_price,
             'previous_price': previous_price,
@@ -40,14 +41,14 @@ def create_mock_market_data(
             'ask': current_price * 1.001,
             'timestamp': timestamp
         }
-        
+
         volume_data[symbol] = {
             'volume': 1000000.0 * volume_multiplier * (1 + i * 0.2),
             'bid_depth': 500000.0,
             'ask_depth': 480000.0,
             'timestamp': timestamp
         }
-    
+
     return {
         'price_data': price_data,
         'volume_data': volume_data,
@@ -56,43 +57,43 @@ def create_mock_market_data(
 
 
 def create_mock_position_data(
-    symbols: List[str] = None,
+    symbols: list[str] | None = None,
     portfolio_value: Decimal = Decimal('100000'),
     position_size_pct: float = 5.0
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Create mock position data for testing."""
     if symbols is None:
         symbols = ['BTC-USD', 'ETH-USD', 'AAPL']
-    
+
     positions = []
-    
+
     for symbol in symbols:
         sector = 'crypto' if 'USD' in symbol else 'equity'
         notional_value = portfolio_value * Decimal(str(position_size_pct / 100))
-        
+
         positions.append({
             'symbol': symbol,
             'notional_value': notional_value,
             'sector': sector,
-            'side': random.choice(['long', 'short']),
-            'entry_price': Decimal(str(random.uniform(100, 60000))),
-            'current_price': Decimal(str(random.uniform(100, 60000))),
-            'size': Decimal(str(random.uniform(0.1, 10.0)))
+            'side': secrets.choice(['long', 'short']),
+            'entry_price': Decimal(str(secrets.randbelow(59900) + 100)),
+            'current_price': Decimal(str(secrets.randbelow(59900) + 100)),
+            'size': Decimal(str(secrets.randbelow(99) / 10 + 0.1))
         })
-    
+
     return positions
 
 
 def create_mock_pnl_data(
     total_pnl: float = 1000.0,
     daily_pnl: float = 500.0,
-    positions: List[Dict[str, Any]] = None,
-    timestamp: Optional[datetime] = None
-) -> Dict[str, Any]:
+    positions: list[dict[str, Any]] | None = None,
+    timestamp: datetime | None = None
+) -> dict[str, Any]:
     """Create mock P&L data for testing."""
     if timestamp is None:
         timestamp = datetime.now()
-    
+
     if positions is None:
         positions = [
             {
@@ -103,10 +104,10 @@ def create_mock_pnl_data(
                 'side': 'long'
             }
         ]
-    
+
     unrealized_total = sum(pos.get('unrealized_pnl', Decimal('0')) for pos in positions)
     realized_total = sum(pos.get('realized_pnl', Decimal('0')) for pos in positions)
-    
+
     return {
         'positions': positions,
         'total_unrealized_pnl': unrealized_total,
@@ -121,7 +122,7 @@ def create_mock_pnl_data(
 
 class MockRiskComponent:
     """Mock risk component for testing."""
-    
+
     def __init__(self, name: str = "MockComponent"):
         self.name = name
         self.enabled = False
@@ -129,23 +130,23 @@ class MockRiskComponent:
         self.alerts_sent = []
         self.callbacks = {}
         self.metrics = {}
-        
+
     async def initialize(self):
         """Initialize mock component."""
         self.initialized = True
         self.enabled = True
-        
+
     def set_alert_callback(self, callback):
         """Set alert callback."""
         self.callbacks['alert'] = callback
-        
+
     async def send_alert(self, alert_data):
         """Send mock alert."""
         self.alerts_sent.append(alert_data)
         if 'alert' in self.callbacks:
             await self.callbacks['alert'](alert_data)
-    
-    def get_status(self) -> Dict[str, Any]:
+
+    def get_status(self) -> dict[str, Any]:
         """Get component status."""
         return {
             'name': self.name,
@@ -156,7 +157,7 @@ class MockRiskComponent:
         }
 
 
-def create_stress_test_data(scenario: str = 'market_crash') -> Dict[str, Any]:
+def create_stress_test_data(scenario: str = 'market_crash') -> dict[str, Any]:
     """Create stress test data for various scenarios."""
     scenarios = {
         'market_crash': {
@@ -190,25 +191,25 @@ def create_stress_test_data(scenario: str = 'market_crash') -> Dict[str, Any]:
             'portfolio_impact': 0.01
         }
     }
-    
+
     if scenario not in scenarios:
         scenario = 'normal_trading'
-    
+
     config = scenarios[scenario]
-    
+
     # Create comprehensive stress test data
     market_data = create_mock_market_data(
         symbols=['BTC-USD', 'ETH-USD', 'AAPL', 'TSLA'],
         price_change_pct=config['price_change_pct'],
         volume_multiplier=config['volume_multiplier']
     )
-    
+
     portfolio_value = Decimal('100000') * (1 + Decimal(str(config['portfolio_impact'])))
     positions = create_mock_position_data(
         symbols=['BTC-USD', 'ETH-USD', 'AAPL', 'TSLA'],
         portfolio_value=portfolio_value
     )
-    
+
     pnl_data = create_mock_pnl_data(
         total_pnl=config['pnl_impact'],
         daily_pnl=config['pnl_impact'],
@@ -223,7 +224,7 @@ def create_stress_test_data(scenario: str = 'market_crash') -> Dict[str, Any]:
             for pos in positions
         ]
     )
-    
+
     return {
         'scenario': scenario,
         'market_data': market_data,
@@ -238,7 +239,7 @@ def _determine_expected_risk_level(scenario: str) -> str:
     """Determine expected risk level for scenario."""
     risk_levels = {
         'market_crash': 'critical',
-        'flash_crash': 'critical', 
+        'flash_crash': 'critical',
         'liquidity_crisis': 'high',
         'volatility_spike': 'medium',
         'normal_trading': 'normal'
@@ -250,37 +251,37 @@ async def simulate_market_session(
     duration_minutes: int = 60,
     update_interval_seconds: int = 30,
     volatility_level: str = 'normal'
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Simulate a market session with realistic price movements."""
-    
+
     volatility_configs = {
         'low': {'price_std': 0.5, 'volume_std': 0.2},
         'normal': {'price_std': 1.0, 'volume_std': 0.5},
         'high': {'price_std': 2.0, 'volume_std': 1.0},
         'extreme': {'price_std': 5.0, 'volume_std': 2.0}
     }
-    
+
     config = volatility_configs.get(volatility_level, volatility_configs['normal'])
-    
+
     session_data = []
     updates_count = (duration_minutes * 60) // update_interval_seconds
-    
+
     base_price = 50000.0
     current_price = base_price
-    
+
     for i in range(updates_count):
         # Generate price movement
         price_change = random.gauss(0, config['price_std'])
         current_price = current_price * (1 + price_change / 100)
-        
+
         # Generate volume
         base_volume = 1000000.0
         volume_change = random.gauss(1.0, config['volume_std'])
         current_volume = base_volume * max(0.1, volume_change)
-        
+
         # Create market snapshot
         timestamp = datetime.now() + timedelta(seconds=i * update_interval_seconds)
-        
+
         market_snapshot = {
             'timestamp': timestamp,
             'price': current_price,
@@ -288,53 +289,53 @@ async def simulate_market_session(
             'volume': current_volume,
             'session_minute': i * update_interval_seconds // 60
         }
-        
+
         session_data.append(market_snapshot)
-    
+
     return session_data
 
 
 class PerformanceTracker:
     """Track performance metrics during testing."""
-    
+
     def __init__(self):
         self.metrics = {}
         self.start_times = {}
-        
+
     def start_timing(self, operation: str):
         """Start timing an operation."""
         self.start_times[operation] = datetime.now()
-    
+
     def end_timing(self, operation: str):
         """End timing an operation and record duration."""
         if operation in self.start_times:
             duration = (datetime.now() - self.start_times[operation]).total_seconds()
-            
+
             if operation not in self.metrics:
                 self.metrics[operation] = []
-            
+
             self.metrics[operation].append(duration)
             del self.start_times[operation]
-            
+
             return duration
         return None
-    
-    def get_average_time(self, operation: str) -> Optional[float]:
+
+    def get_average_time(self, operation: str) -> float | None:
         """Get average time for an operation."""
         if operation in self.metrics and self.metrics[operation]:
             return sum(self.metrics[operation]) / len(self.metrics[operation])
         return None
-    
-    def get_max_time(self, operation: str) -> Optional[float]:
+
+    def get_max_time(self, operation: str) -> float | None:
         """Get maximum time for an operation."""
         if operation in self.metrics and self.metrics[operation]:
             return max(self.metrics[operation])
         return None
-    
-    def get_performance_summary(self) -> Dict[str, Dict[str, float]]:
+
+    def get_performance_summary(self) -> dict[str, dict[str, float]]:
         """Get performance summary for all operations."""
         summary = {}
-        
+
         for operation, times in self.metrics.items():
             if times:
                 summary[operation] = {
@@ -343,11 +344,11 @@ class PerformanceTracker:
                     'max_ms': max(times) * 1000,
                     'min_ms': min(times) * 1000
                 }
-        
+
         return summary
 
 
-def create_integration_test_callbacks() -> Dict[str, AsyncMock]:
+def create_integration_test_callbacks() -> dict[str, AsyncMock]:
     """Create mock callbacks for integration testing."""
     return {
         'halt_trading': AsyncMock(),
@@ -369,37 +370,37 @@ async def wait_for_condition(
 ) -> bool:
     """Wait for a condition to become true."""
     start_time = datetime.now()
-    
+
     while (datetime.now() - start_time).total_seconds() < timeout_seconds:
         if await condition_func() if asyncio.iscoroutinefunction(condition_func) else condition_func():
             return True
         await asyncio.sleep(check_interval)
-    
+
     return False
 
 
-def assert_risk_metrics_valid(metrics: Dict[str, Any]):
+def assert_risk_metrics_valid(metrics: dict[str, Any]):
     """Assert that risk metrics are valid."""
     required_fields = ['timestamp', 'overall_risk_level']
-    
+
     for field in required_fields:
         assert field in metrics, f"Missing required field: {field}"
-    
+
     # Risk level should be valid
     valid_risk_levels = ['normal', 'low', 'medium', 'high', 'critical']
     assert metrics['overall_risk_level'] in valid_risk_levels
-    
+
     # Timestamp should be recent (within last hour)
     if isinstance(metrics['timestamp'], str):
         timestamp = datetime.fromisoformat(metrics['timestamp'].replace('Z', '+00:00'))
     else:
         timestamp = metrics['timestamp']
-    
+
     time_diff = (datetime.now() - timestamp.replace(tzinfo=None)).total_seconds()
     assert time_diff < 3600, "Timestamp is too old"
 
 
-def create_test_config_override(overrides: Dict[str, Any] = None) -> Dict[str, Any]:
+def create_test_config_override(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
     """Create test configuration with overrides."""
     base_config = {
         'risk_limits': {
@@ -425,7 +426,7 @@ def create_test_config_override(overrides: Dict[str, Any] = None) -> Dict[str, A
             }
         }
     }
-    
+
     if overrides:
         # Deep merge overrides
         def deep_merge(base, override):
@@ -434,7 +435,7 @@ def create_test_config_override(overrides: Dict[str, Any] = None) -> Dict[str, A
                     deep_merge(base[key], value)
                 else:
                     base[key] = value
-        
+
         deep_merge(base_config, overrides)
-    
+
     return base_config

@@ -4,6 +4,14 @@ Risk Management Test Suite
 Comprehensive test suite for FlashMM enterprise risk management system.
 """
 
+# Test utilities
+from .test_utils import (
+    MockRiskComponent,
+    create_mock_market_data,
+    create_mock_pnl_data,
+    create_mock_position_data,
+)
+
 # Test configuration
 TEST_CONFIG = {
     'default_timeout': 30.0,
@@ -14,18 +22,10 @@ TEST_CONFIG = {
     'integration_test_enabled': True
 }
 
-# Test utilities
-from .test_utils import (
-    create_mock_market_data,
-    create_mock_position_data,
-    create_mock_pnl_data,
-    MockRiskComponent
-)
-
 __all__ = [
     'TEST_CONFIG',
     'create_mock_market_data',
-    'create_mock_position_data', 
+    'create_mock_position_data',
     'create_mock_pnl_data',
     'MockRiskComponent'
 ]

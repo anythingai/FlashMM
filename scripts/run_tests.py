@@ -5,45 +5,65 @@ Executes the complete test suite and generates comprehensive reports
 for unit tests, integration tests, and performance validation.
 """
 
+import json
+import os
 import subprocess
 import sys
-import json
 import time
 from datetime import datetime
-from typing import Dict, List, Any
-import os
+from typing import Any
 
-def run_command(command: List[str], description: str) -> Dict[str, Any]:
+
+def run_command(command: list[str], description: str) -> dict[str, Any]:
     """Run a command and capture results."""
     print(f"\n{'='*60}")
     print(f"Running: {description}")
     print(f"Command: {' '.join(command)}")
     print(f"{'='*60}")
-    
+
     start_time = time.time()
-    
+
     try:
-        result = subprocess.run(
-            command,
+        import shutil
+        # Use full executable path for security
+        if command and isinstance(command[0], str):
+            exe_path = shutil.which(command[0])
+            if not exe_path:
+                return {
+                    'description': description,
+                    'command': ' '.join(command),
+                    'success': False,
+                    'duration_seconds': 0,
+                    'stdout': '',
+                    'stderr': f'Executable {command[0]} not found in PATH',
+                    'return_code': -3
+                }
+            validated_command = [exe_path] + command[1:]
+        else:
+            validated_command = command
+
+        result = subprocess.run(  # noqa: S603 - command is validated above
+            validated_command,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout
+            timeout=300,  # 5 minute timeout
+            shell=False   # Explicit shell=False for security
         )
-        
+
         end_time = time.time()
         duration = end_time - start_time
-        
+
         success = result.returncode == 0
-        
+
         if success:
             print(f"✅ {description} PASSED ({duration:.1f}s)")
         else:
             print(f"❌ {description} FAILED ({duration:.1f}s)")
             print(f"Error output:\n{result.stderr}")
-        
+
         if result.stdout:
             print(f"Output:\n{result.stdout}")
-        
+
         return {
             'description': description,
             'command': ' '.join(command),
@@ -53,7 +73,7 @@ def run_command(command: List[str], description: str) -> Dict[str, Any]:
             'stderr': result.stderr,
             'return_code': result.returncode
         }
-        
+
     except subprocess.TimeoutExpired:
         print(f"⏰ {description} TIMED OUT after 5 minutes")
         return {
@@ -86,20 +106,20 @@ def main():
     ██╔══╝  ██║     ██╔══██║╚════██║██╔══██║██║╚██╔╝██║██║╚██╔╝██║
     ██║     ███████╗██║  ██║███████║██║  ██║██║ ╚═╝ ██║██║ ╚═╝ ██║
     ╚═╝     ╚══════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚═╝
-    
+
     COMPREHENSIVE TEST SUITE RUNNER
     """)
-    
+
     start_time = time.time()
     test_results = []
-    
+
     # Change to project root directory
     project_root = os.path.join(os.path.dirname(__file__), '..')
     os.chdir(project_root)
-    
+
     print(f"Project root: {os.getcwd()}")
     print(f"Test execution started at: {datetime.now().isoformat()}")
-    
+
     # Test suite configuration
     test_suite = [
         {
@@ -119,32 +139,32 @@ def main():
             'description': 'Performance Validation'
         }
     ]
-    
+
     # Execute test suite
     for test_config in test_suite:
         result = run_command(test_config['command'], test_config['description'])
         test_results.append(result)
-    
+
     # Generate summary report
     total_duration = time.time() - start_time
     passed_tests = sum(1 for r in test_results if r['success'])
     total_tests = len(test_results)
     success_rate = passed_tests / total_tests if total_tests > 0 else 0
-    
+
     print(f"\n{'='*80}")
     print("TEST EXECUTION SUMMARY")
     print(f"{'='*80}")
-    
+
     for result in test_results:
         status = "✅ PASS" if result['success'] else "❌ FAIL"
         duration = result['duration_seconds']
         print(f"{status} | {result['description']:<25} | {duration:6.1f}s")
-    
+
     print(f"{'='*80}")
     print(f"TOTAL RESULTS: {passed_tests}/{total_tests} test suites passed ({success_rate:.1%})")
     print(f"TOTAL DURATION: {total_duration:.1f} seconds")
     print(f"EXECUTION TIME: {datetime.now().isoformat()}")
-    
+
     # Overall assessment
     if success_rate >= 0.75:  # 75% pass rate required
         print("🎉 OVERALL ASSESSMENT: SYSTEM READY FOR DEPLOYMENT")
@@ -152,9 +172,9 @@ def main():
     else:
         print("⚠️  OVERALL ASSESSMENT: SYSTEM NEEDS ATTENTION BEFORE DEPLOYMENT")
         overall_success = False
-    
+
     print(f"{'='*80}")
-    
+
     # Generate detailed report
     report = {
         'timestamp': datetime.now().isoformat(),
@@ -175,21 +195,21 @@ def main():
         },
         'next_steps': generate_next_steps(test_results, overall_success)
     }
-    
+
     # Save detailed report
     report_filename = f"test_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     with open(report_filename, 'w') as f:
         json.dump(report, f, indent=2)
-    
+
     print(f"📄 Detailed test report saved to: {report_filename}")
-    
+
     # Exit with appropriate code
     return 0 if overall_success else 1
 
-def generate_next_steps(test_results: List[Dict[str, Any]], overall_success: bool) -> List[str]:
+def generate_next_steps(test_results: list[dict[str, Any]], overall_success: bool) -> list[str]:
     """Generate next steps based on test results."""
     next_steps = []
-    
+
     if overall_success:
         next_steps.extend([
             "✅ All critical test suites passed - system is ready for deployment",
@@ -200,7 +220,7 @@ def generate_next_steps(test_results: List[Dict[str, Any]], overall_success: boo
         ])
     else:
         failed_tests = [r for r in test_results if not r['success']]
-        
+
         for failed_test in failed_tests:
             if 'Unit Tests' in failed_test['description']:
                 next_steps.append("🔧 Fix unit test failures - check component implementations")
@@ -210,14 +230,14 @@ def generate_next_steps(test_results: List[Dict[str, Any]], overall_success: boo
                 next_steps.append("⚡ Optimize performance - review cycle times and resource usage")
             elif 'Performance Validation' in failed_test['description']:
                 next_steps.append("🎯 Address performance validation failures - check system requirements")
-        
+
         next_steps.extend([
             "⚠️  Do not deploy to production until all critical tests pass",
             "🔍 Review test logs and error messages for specific issues",
             "🛠️  Consider adjusting system parameters or optimization settings",
             "🔄 Re-run tests after fixes to confirm resolution"
         ])
-    
+
     return next_steps
 
 if __name__ == "__main__":

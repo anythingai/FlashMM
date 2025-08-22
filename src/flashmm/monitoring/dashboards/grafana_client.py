@@ -5,18 +5,13 @@ Comprehensive Grafana Cloud integration with automatic dashboard provisioning,
 real-time data source configuration, and alert rule management for FlashMM monitoring.
 """
 
-import asyncio
+from dataclasses import dataclass
+from typing import Any
+
 import aiohttp
-import json
-from typing import Dict, Any, List, Optional, Union
-from datetime import datetime, timedelta
-from dataclasses import dataclass, asdict
-import os
-import base64
 
 from flashmm.config.settings import get_config
 from flashmm.utils.logging import get_logger
-from flashmm.utils.exceptions import ValidationError
 
 logger = get_logger(__name__)
 
@@ -26,7 +21,7 @@ class DashboardConfig:
     """Dashboard configuration."""
     title: str
     uid: str
-    tags: List[str]
+    tags: list[str]
     folder: str
     refresh_interval: str = "5s"
     time_range: str = "1h"
@@ -57,69 +52,72 @@ class AlertRule:
     for_duration: str
     no_data_state: str = "NoData"
     exec_err_state: str = "Alerting"
-    annotations: Dict[str, str] = None
-    labels: Dict[str, str] = None
+    annotations: dict[str, str] | None = None
+    labels: dict[str, str] | None = None
 
 
 class GrafanaClient:
     """Grafana API client with comprehensive dashboard management."""
-    
+
     def __init__(self):
         self.config = get_config()
-        
+
         # Grafana configuration
         self.base_url = self.config.get("grafana.url", "https://flashmm.grafana.net")
         self.api_key = self.config.get("grafana.api_key", "")
         self.org_id = self.config.get("grafana.org_id", 1)
-        
+
         # InfluxDB configuration for data sources
         self.influxdb_url = self.config.get("storage.influxdb.host", "localhost:8086")
         self.influxdb_database = self.config.get("storage.influxdb.database", "flashmm")
         self.influxdb_org = self.config.get("storage.influxdb.org", "flashmm")
         self.influxdb_bucket = self.config.get("storage.influxdb.bucket", "metrics")
-        
+
         # Session for HTTP requests
-        self.session: Optional[aiohttp.ClientSession] = None
-        
+        self.session: aiohttp.ClientSession | None = None
+
         # Dashboard templates cache
         self._dashboard_templates = {}
-        
+
         logger.info(f"GrafanaClient initialized for {self.base_url}")
-    
+
     async def initialize(self) -> None:
         """Initialize Grafana client and session."""
         try:
             if not self.api_key:
                 logger.warning("No Grafana API key configured - dashboard features will be limited")
                 return
-            
+
             # Create session with authentication headers
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
                 "Accept": "application/json"
             }
-            
+
             connector = aiohttp.TCPConnector(limit=10, limit_per_host=5)
             timeout = aiohttp.ClientTimeout(total=30)
-            
+
             self.session = aiohttp.ClientSession(
                 headers=headers,
                 connector=connector,
                 timeout=timeout
             )
-            
+
             # Verify connection
             await self._verify_connection()
-            
+
             logger.info("GrafanaClient initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize GrafanaClient: {e}")
             raise
-    
+
     async def _verify_connection(self) -> None:
         """Verify connection to Grafana API."""
+        if not self.session:
+            raise ConnectionError("Grafana session not initialized")
+
         try:
             async with self.session.get(f"{self.base_url}/api/org") as response:
                 if response.status == 200:
@@ -131,12 +129,12 @@ class GrafanaClient:
         except Exception as e:
             logger.error(f"Grafana connection verification failed: {e}")
             raise
-    
-    async def setup_data_sources(self) -> List[Dict[str, Any]]:
+
+    async def setup_data_sources(self) -> list[dict[str, Any]]:
         """Setup InfluxDB data sources for FlashMM metrics."""
         try:
             data_sources = []
-            
+
             # Main InfluxDB data source for metrics
             influxdb_config = DataSourceConfig(
                 name="FlashMM-InfluxDB",
@@ -146,11 +144,11 @@ class GrafanaClient:
                 access="proxy",
                 is_default=True
             )
-            
+
             # Create or update data source
             ds_result = await self._create_or_update_data_source(influxdb_config)
             data_sources.append(ds_result)
-            
+
             # Additional data source for real-time metrics (Redis/WebSocket)
             realtime_config = DataSourceConfig(
                 name="FlashMM-Realtime",
@@ -159,27 +157,27 @@ class GrafanaClient:
                 database="0",
                 access="proxy"
             )
-            
+
             # Create realtime data source if Redis plugin is available
             try:
                 rt_result = await self._create_or_update_data_source(realtime_config)
                 data_sources.append(rt_result)
             except Exception as e:
                 logger.warning(f"Redis data source creation failed (plugin may not be installed): {e}")
-            
+
             logger.info(f"Setup {len(data_sources)} data sources successfully")
             return data_sources
-            
+
         except Exception as e:
             logger.error(f"Failed to setup data sources: {e}")
             raise
-    
-    async def _create_or_update_data_source(self, config: DataSourceConfig) -> Dict[str, Any]:
+
+    async def _create_or_update_data_source(self, config: DataSourceConfig) -> dict[str, Any]:
         """Create or update a data source."""
         try:
             # Check if data source exists
             existing_ds = await self._get_data_source_by_name(config.name)
-            
+
             ds_data = {
                 "name": config.name,
                 "type": config.type,
@@ -192,7 +190,7 @@ class GrafanaClient:
                 "jsonData": {},
                 "secureJsonData": {}
             }
-            
+
             if config.type == "influxdb":
                 ds_data["jsonData"] = {
                     "organization": self.influxdb_org,
@@ -200,7 +198,10 @@ class GrafanaClient:
                     "version": "Flux",
                     "httpMode": "POST"
                 }
-            
+
+            if not self.session:
+                raise ConnectionError("Grafana session not initialized")
+
             if existing_ds:
                 # Update existing data source
                 ds_data["id"] = existing_ds["id"]
@@ -228,13 +229,16 @@ class GrafanaClient:
                     else:
                         error_text = await response.text()
                         raise Exception(f"Failed to create data source: {error_text}")
-        
+
         except Exception as e:
             logger.error(f"Failed to create/update data source {config.name}: {e}")
             raise
-    
-    async def _get_data_source_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+
+    async def _get_data_source_by_name(self, name: str) -> dict[str, Any] | None:
         """Get data source by name."""
+        if not self.session:
+            return None
+
         try:
             async with self.session.get(f"{self.base_url}/api/datasources/name/{name}") as response:
                 if response.status == 200:
@@ -248,40 +252,40 @@ class GrafanaClient:
         except Exception as e:
             logger.warning(f"Error getting data source {name}: {e}")
             return None
-    
-    async def provision_dashboards(self) -> List[Dict[str, Any]]:
+
+    async def provision_dashboards(self) -> list[dict[str, Any]]:
         """Provision all FlashMM dashboards."""
         try:
             dashboards = []
-            
+
             # Trading Performance Dashboard
             trading_dashboard = await self._create_trading_dashboard()
             dashboards.append(trading_dashboard)
-            
+
             # System Performance Dashboard
             system_dashboard = await self._create_system_dashboard()
             dashboards.append(system_dashboard)
-            
+
             # Risk Monitoring Dashboard
             risk_dashboard = await self._create_risk_dashboard()
             dashboards.append(risk_dashboard)
-            
+
             # ML Performance Dashboard
             ml_dashboard = await self._create_ml_dashboard()
             dashboards.append(ml_dashboard)
-            
+
             # Public Demo Dashboard
             public_dashboard = await self._create_public_dashboard()
             dashboards.append(public_dashboard)
-            
+
             logger.info(f"Provisioned {len(dashboards)} dashboards successfully")
             return dashboards
-            
+
         except Exception as e:
             logger.error(f"Failed to provision dashboards: {e}")
             raise
-    
-    async def _create_trading_dashboard(self) -> Dict[str, Any]:
+
+    async def _create_trading_dashboard(self) -> dict[str, Any]:
         """Create comprehensive trading performance dashboard."""
         config = DashboardConfig(
             title="FlashMM Trading Performance",
@@ -290,7 +294,7 @@ class GrafanaClient:
             folder="FlashMM",
             description="Real-time trading performance metrics including P&L, spreads, and volume"
         )
-        
+
         dashboard_json = {
             "dashboard": {
                 "id": None,
@@ -330,10 +334,10 @@ class GrafanaClient:
             "folderId": 0,
             "overwrite": True
         }
-        
+
         return await self._create_or_update_dashboard(dashboard_json)
-    
-    def _create_spread_improvement_panel(self) -> Dict[str, Any]:
+
+    def _create_spread_improvement_panel(self) -> dict[str, Any]:
         """Create spread improvement panel."""
         return {
             "id": 1,
@@ -373,8 +377,8 @@ class GrafanaClient:
                 "justifyMode": "center"
             }
         }
-    
-    def _create_pnl_panel(self) -> Dict[str, Any]:
+
+    def _create_pnl_panel(self) -> dict[str, Any]:
         """Create P&L tracking panel."""
         return {
             "id": 2,
@@ -421,8 +425,8 @@ class GrafanaClient:
                 }
             }
         }
-    
-    def _create_volume_panel(self) -> Dict[str, Any]:
+
+    def _create_volume_panel(self) -> dict[str, Any]:
         """Create trading volume panel."""
         return {
             "id": 3,
@@ -442,8 +446,8 @@ class GrafanaClient:
                 }
             }
         }
-    
-    def _create_fill_rate_panel(self) -> Dict[str, Any]:
+
+    def _create_fill_rate_panel(self) -> dict[str, Any]:
         """Create fill rate panel."""
         return {
             "id": 4,
@@ -471,8 +475,8 @@ class GrafanaClient:
                 }
             }
         }
-    
-    def _create_inventory_panel(self) -> Dict[str, Any]:
+
+    def _create_inventory_panel(self) -> dict[str, Any]:
         """Create inventory utilization panel."""
         return {
             "id": 5,
@@ -500,8 +504,8 @@ class GrafanaClient:
                 }
             }
         }
-    
-    def _create_trading_latency_panel(self) -> Dict[str, Any]:
+
+    def _create_trading_latency_panel(self) -> dict[str, Any]:
         """Create trading latency panel."""
         return {
             "id": 6,
@@ -529,8 +533,8 @@ class GrafanaClient:
                 }
             }
         }
-    
-    async def _create_system_dashboard(self) -> Dict[str, Any]:
+
+    async def _create_system_dashboard(self) -> dict[str, Any]:
         """Create system performance dashboard."""
         config = DashboardConfig(
             title="FlashMM System Performance",
@@ -539,7 +543,7 @@ class GrafanaClient:
             folder="FlashMM",
             description="System resource monitoring and performance metrics"
         )
-        
+
         dashboard_json = {
             "dashboard": {
                 "id": None,
@@ -579,10 +583,10 @@ class GrafanaClient:
             "folderId": 0,
             "overwrite": True
         }
-        
+
         return await self._create_or_update_dashboard(dashboard_json)
-    
-    async def _create_risk_dashboard(self) -> Dict[str, Any]:
+
+    async def _create_risk_dashboard(self) -> dict[str, Any]:
         """Create risk monitoring dashboard."""
         config = DashboardConfig(
             title="FlashMM Risk Monitoring",
@@ -591,7 +595,7 @@ class GrafanaClient:
             folder="FlashMM",
             description="Risk management and compliance monitoring"
         )
-        
+
         dashboard_json = {
             "dashboard": {
                 "id": None,
@@ -631,10 +635,10 @@ class GrafanaClient:
             "folderId": 0,
             "overwrite": True
         }
-        
+
         return await self._create_or_update_dashboard(dashboard_json)
-    
-    async def _create_ml_dashboard(self) -> Dict[str, Any]:
+
+    async def _create_ml_dashboard(self) -> dict[str, Any]:
         """Create ML performance dashboard."""
         config = DashboardConfig(
             title="FlashMM ML Performance",
@@ -643,7 +647,7 @@ class GrafanaClient:
             folder="FlashMM",
             description="Machine learning model performance and cost tracking"
         )
-        
+
         dashboard_json = {
             "dashboard": {
                 "id": None,
@@ -683,10 +687,10 @@ class GrafanaClient:
             "folderId": 0,
             "overwrite": True
         }
-        
+
         return await self._create_or_update_dashboard(dashboard_json)
-    
-    async def _create_public_dashboard(self) -> Dict[str, Any]:
+
+    async def _create_public_dashboard(self) -> dict[str, Any]:
         """Create public demo dashboard."""
         config = DashboardConfig(
             title="FlashMM Public Demo",
@@ -696,7 +700,7 @@ class GrafanaClient:
             public_access=True,
             description="Public demonstration dashboard showing FlashMM performance"
         )
-        
+
         dashboard_json = {
             "dashboard": {
                 "id": None,
@@ -725,17 +729,22 @@ class GrafanaClient:
             "folderId": 0,
             "overwrite": True
         }
-        
+
         result = await self._create_or_update_dashboard(dashboard_json)
-        
+
         # Enable public access if configured
-        if config.public_access:
-            await self._enable_public_access(result.get("uid"))
-        
+        if config.public_access and result and "uid" in result:
+            dashboard_uid = result.get("uid")
+            if dashboard_uid:
+                await self._enable_public_access(dashboard_uid)
+
         return result
-    
-    async def _create_or_update_dashboard(self, dashboard_json: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def _create_or_update_dashboard(self, dashboard_json: dict[str, Any]) -> dict[str, Any]:
         """Create or update a dashboard."""
+        if not self.session:
+            raise ConnectionError("Grafana session not initialized")
+
         try:
             async with self.session.post(
                 f"{self.base_url}/api/dashboards/db",
@@ -749,12 +758,12 @@ class GrafanaClient:
                     error_text = await response.text()
                     logger.error(f"Failed to create/update dashboard: {error_text}")
                     raise Exception(f"Dashboard creation failed: {error_text}")
-        
+
         except Exception as e:
             logger.error(f"Error creating/updating dashboard: {e}")
             raise
-    
-    async def _enable_public_access(self, dashboard_uid: str) -> Optional[str]:
+
+    async def _enable_public_access(self, dashboard_uid: str) -> str | None:
         """Enable public access for a dashboard."""
         try:
             # Create public dashboard
@@ -765,7 +774,10 @@ class GrafanaClient:
                 "annotationsEnabled": False,
                 "timeSelectionEnabled": True
             }
-            
+
+            if not self.session:
+                return None
+
             async with self.session.post(
                 f"{self.base_url}/api/dashboards/public",
                 json=public_config
@@ -779,16 +791,16 @@ class GrafanaClient:
                     error_text = await response.text()
                     logger.warning(f"Failed to enable public access: {error_text}")
                     return None
-        
+
         except Exception as e:
             logger.warning(f"Error enabling public access for dashboard {dashboard_uid}: {e}")
             return None
-    
-    async def setup_alert_rules(self) -> List[Dict[str, Any]]:
+
+    async def setup_alert_rules(self) -> list[dict[str, Any]]:
         """Setup alert rules for FlashMM monitoring."""
         try:
             alert_rules = []
-            
+
             # High latency alert
             latency_rule = AlertRule(
                 title="High Trading Latency",
@@ -802,7 +814,7 @@ class GrafanaClient:
                 },
                 labels={"severity": "warning", "service": "flashmm"}
             )
-            
+
             # Spread degradation alert
             spread_rule = AlertRule(
                 title="Spread Improvement Degraded",
@@ -816,7 +828,7 @@ class GrafanaClient:
                 },
                 labels={"severity": "critical", "service": "flashmm"}
             )
-            
+
             # System resource alert
             resource_rule = AlertRule(
                 title="High System Resource Usage",
@@ -830,7 +842,7 @@ class GrafanaClient:
                 },
                 labels={"severity": "warning", "service": "flashmm"}
             )
-            
+
             # Create alert rules
             for rule in [latency_rule, spread_rule, resource_rule]:
                 try:
@@ -838,15 +850,15 @@ class GrafanaClient:
                     alert_rules.append(result)
                 except Exception as e:
                     logger.error(f"Failed to create alert rule {rule.title}: {e}")
-            
+
             logger.info(f"Setup {len(alert_rules)} alert rules successfully")
             return alert_rules
-            
+
         except Exception as e:
             logger.error(f"Failed to setup alert rules: {e}")
             raise
-    
-    async def _create_alert_rule(self, rule: AlertRule) -> Dict[str, Any]:
+
+    async def _create_alert_rule(self, rule: AlertRule) -> dict[str, Any]:
         """Create an alert rule."""
         try:
             rule_data = {
@@ -876,7 +888,10 @@ class GrafanaClient:
                 "annotations": rule.annotations or {},
                 "labels": rule.labels or {}
             }
-            
+
+            if not self.session:
+                raise ConnectionError("Grafana session not initialized")
+
             async with self.session.post(
                 f"{self.base_url}/api/v1/provisioning/alert-rules",
                 json=rule_data
@@ -888,11 +903,11 @@ class GrafanaClient:
                 else:
                     error_text = await response.text()
                     raise Exception(f"Failed to create alert rule: {error_text}")
-        
+
         except Exception as e:
             logger.error(f"Error creating alert rule {rule.title}: {e}")
             raise
-    
+
     def _parse_interval(self, interval_str: str) -> int:
         """Parse interval string to seconds."""
         if interval_str.endswith('s'):
@@ -903,11 +918,11 @@ class GrafanaClient:
             return int(interval_str[:-1]) * 3600
         else:
             return 60  # Default to 1 minute
-    
+
     def _parse_duration(self, duration_str: str) -> int:
         """Parse duration string to seconds."""
         return self._parse_interval(duration_str)
-    
+
     async def get_dashboard_url(self, dashboard_uid: str, public: bool = False) -> str:
         """Get dashboard URL."""
         if public:
@@ -915,9 +930,12 @@ class GrafanaClient:
             return f"{self.base_url}/public-dashboards/{dashboard_uid}"
         else:
             return f"{self.base_url}/d/{dashboard_uid}"
-    
+
     async def refresh_dashboard(self, dashboard_uid: str) -> bool:
         """Refresh a dashboard."""
+        if not self.session:
+            return False
+
         try:
             async with self.session.post(
                 f"{self.base_url}/api/dashboards/uid/{dashboard_uid}/refresh"
@@ -931,9 +949,12 @@ class GrafanaClient:
         except Exception as e:
             logger.error(f"Error refreshing dashboard {dashboard_uid}: {e}")
             return False
-    
-    async def export_dashboard(self, dashboard_uid: str) -> Optional[Dict[str, Any]]:
+
+    async def export_dashboard(self, dashboard_uid: str) -> dict[str, Any] | None:
         """Export dashboard JSON."""
+        if not self.session:
+            return None
+
         try:
             async with self.session.get(
                 f"{self.base_url}/api/dashboards/uid/{dashboard_uid}"
@@ -948,14 +969,17 @@ class GrafanaClient:
         except Exception as e:
             logger.error(f"Error exporting dashboard {dashboard_uid}: {e}")
             return None
-    
-    async def list_dashboards(self, folder: str = None) -> List[Dict[str, Any]]:
+
+    async def list_dashboards(self, folder: str | None = None) -> list[dict[str, Any]]:
         """List all dashboards."""
+        if not self.session:
+            return []
+
         try:
             params = {}
             if folder:
                 params["folderIds"] = folder
-            
+
             async with self.session.get(
                 f"{self.base_url}/api/search",
                 params=params
@@ -970,7 +994,7 @@ class GrafanaClient:
         except Exception as e:
             logger.error(f"Error listing dashboards: {e}")
             return []
-    
+
     async def cleanup(self) -> None:
         """Cleanup Grafana client resources."""
         try:
@@ -982,7 +1006,7 @@ class GrafanaClient:
 
 
 # Global Grafana client instance
-_grafana_client: Optional[GrafanaClient] = None
+_grafana_client: GrafanaClient | None = None
 
 
 async def get_grafana_client() -> GrafanaClient:

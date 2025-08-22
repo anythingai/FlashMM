@@ -5,16 +5,16 @@ Handles automatic environment detection and environment-specific behaviors.
 """
 
 import os
-from typing import Dict, Any
+from typing import Any
 
 
 def detect_environment() -> str:
     """Auto-detect environment based on various signals."""
-    
+
     # Explicit environment variable
     if env := os.getenv("ENVIRONMENT"):
         return env.lower()
-    
+
     # Docker container detection
     if os.path.exists("/.dockerenv"):
         hostname = os.getenv("HOSTNAME", "")
@@ -24,7 +24,7 @@ def detect_environment() -> str:
             return "production"
         else:
             return "testnet"  # Default for containers
-    
+
     # Kubernetes detection
     if os.getenv("KUBERNETES_SERVICE_HOST"):
         namespace = os.getenv("NAMESPACE", "")
@@ -34,7 +34,7 @@ def detect_environment() -> str:
             return "testnet"
         else:
             return "testnet"
-    
+
     # Development indicators
     dev_indicators = [
         os.getenv("PYTHONPATH"),
@@ -42,17 +42,17 @@ def detect_environment() -> str:
         os.path.exists(".git"),
         os.getenv("VIRTUAL_ENV"),
     ]
-    
+
     if any(dev_indicators):
         return "development"
-    
+
     # Safe default
     return "development"
 
 
-def get_environment_config(environment: str) -> Dict[str, Any]:
+def get_environment_config(environment: str) -> dict[str, Any]:
     """Get environment-specific configuration overrides."""
-    
+
     configs = {
         "development": {
             "app": {
@@ -74,7 +74,7 @@ def get_environment_config(environment: str) -> Dict[str, Any]:
                 "ip_whitelist_enabled": False,
             },
         },
-        
+
         "testnet": {
             "app": {
                 "debug": False,
@@ -104,7 +104,7 @@ def get_environment_config(environment: str) -> Dict[str, Any]:
                 "audit_logging": True,
             },
         },
-        
+
         "production": {
             "app": {
                 "debug": False,
@@ -146,7 +146,7 @@ def get_environment_config(environment: str) -> Dict[str, Any]:
             },
         },
     }
-    
+
     return configs.get(environment, configs["development"])
 
 
@@ -169,7 +169,7 @@ def get_log_level(environment: str) -> str:
     """Get appropriate log level for environment."""
     levels = {
         "development": "DEBUG",
-        "testnet": "INFO", 
+        "testnet": "INFO",
         "production": "WARNING",
     }
     return levels.get(environment, "INFO")

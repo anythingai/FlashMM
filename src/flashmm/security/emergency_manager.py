@@ -6,18 +6,18 @@ emergency shutdown procedures, data protection, system recovery, and disaster re
 """
 
 import asyncio
-import json
-import time
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional, Set, Callable, Union
-from dataclasses import dataclass, asdict
-from enum import Enum
-import secrets
 import hashlib
+import secrets
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any
 
 from flashmm.config.settings import get_config
-from flashmm.utils.logging import SecurityLogger
 from flashmm.utils.exceptions import SecurityError
+from flashmm.utils.logging import SecurityLogger
 
 logger = SecurityLogger()
 
@@ -79,14 +79,14 @@ class EmergencyIncident:
     emergency_level: EmergencyLevel
     description: str
     detected_by: str
-    affected_systems: List[str]
-    impact_assessment: Dict[str, Any]
-    response_actions: List[str]
+    affected_systems: list[str]
+    impact_assessment: dict[str, Any]
+    response_actions: list[str]
     status: str  # active, contained, resolved
     escalation_level: int
-    metadata: Dict[str, Any]
-    resolution_timestamp: Optional[datetime] = None
-    lessons_learned: Optional[str] = None
+    metadata: dict[str, Any]
+    resolution_timestamp: datetime | None = None
+    lessons_learned: str | None = None
 
 
 @dataclass
@@ -96,11 +96,11 @@ class EmergencyContact:
     name: str
     role: str
     primary_phone: str
-    secondary_phone: Optional[str]
+    secondary_phone: str | None
     email: str
     escalation_level: int
     available_24x7: bool
-    contact_methods: List[str]  # phone, sms, email, slack, etc.
+    contact_methods: list[str]  # phone, sms, email, slack, etc.
 
 
 @dataclass
@@ -108,35 +108,35 @@ class EmergencyProcedure:
     """Emergency response procedure."""
     procedure_id: str
     name: str
-    emergency_types: List[EmergencyType]
-    emergency_levels: List[EmergencyLevel]
+    emergency_types: list[EmergencyType]
+    emergency_levels: list[EmergencyLevel]
     description: str
-    steps: List[Dict[str, Any]]
+    steps: list[dict[str, Any]]
     estimated_duration: timedelta
-    required_personnel: List[str]
-    required_systems: List[str]
-    success_criteria: List[str]
-    rollback_procedure: Optional[str] = None
+    required_personnel: list[str]
+    required_systems: list[str]
+    success_criteria: list[str]
+    rollback_procedure: str | None = None
 
 
 class EmergencyCommunicator:
     """Handles emergency communications and notifications."""
-    
+
     def __init__(self):
         self.config = get_config()
-        self.emergency_contacts: Dict[str, EmergencyContact] = {}
-        self.communication_channels: Dict[str, Dict[str, Any]] = {}
-        
+        self.emergency_contacts: dict[str, EmergencyContact] = {}
+        self.communication_channels: dict[str, dict[str, Any]] = {}
+
         # Load emergency contacts
         self._load_emergency_contacts()
-        
+
         # Initialize communication channels
         self._initialize_communication_channels()
-    
+
     def _load_emergency_contacts(self) -> None:
         """Load emergency contacts from configuration."""
         contacts_config = self.config.get("security.emergency_contacts", [])
-        
+
         for contact_data in contacts_config:
             contact = EmergencyContact(
                 contact_id=contact_data.get("id"),
@@ -149,9 +149,9 @@ class EmergencyCommunicator:
                 available_24x7=contact_data.get("available_24x7", False),
                 contact_methods=contact_data.get("contact_methods", ["email"])
             )
-            
+
             self.emergency_contacts[contact.contact_id] = contact
-    
+
     def _initialize_communication_channels(self) -> None:
         """Initialize communication channels."""
         self.communication_channels = {
@@ -175,13 +175,13 @@ class EmergencyCommunicator:
                 "webhook_url": self.config.get("emergency.teams_webhook_url")
             }
         }
-    
-    async def send_emergency_notification(self, 
+
+    async def send_emergency_notification(self,
                                         incident: EmergencyIncident,
                                         escalation_level: int = 1,
-                                        urgent: bool = False) -> Dict[str, Any]:
+                                        urgent: bool = False) -> dict[str, Any]:
         """Send emergency notification to appropriate contacts."""
-        
+
         notification_results = {
             "notification_id": f"notif_{secrets.token_hex(8)}",
             "incident_id": incident.incident_id,
@@ -191,30 +191,30 @@ class EmergencyCommunicator:
             "channels_used": [],
             "failures": []
         }
-        
+
         # Get contacts for escalation level
         contacts_to_notify = [
             contact for contact in self.emergency_contacts.values()
             if contact.escalation_level <= escalation_level
         ]
-        
+
         # Prepare notification message
         message = self._format_emergency_message(incident, urgent)
-        
+
         # Send notifications
         for contact in contacts_to_notify:
             for method in contact.contact_methods:
                 try:
                     if method in self.communication_channels and self.communication_channels[method]["enabled"]:
                         success = await self._send_notification(method, contact, message, incident)
-                        
+
                         if success:
                             notification_results["contacts_notified"].append({
                                 "contact_id": contact.contact_id,
                                 "name": contact.name,
                                 "method": method
                             })
-                            
+
                             if method not in notification_results["channels_used"]:
                                 notification_results["channels_used"].append(method)
                         else:
@@ -223,22 +223,22 @@ class EmergencyCommunicator:
                                 "method": method,
                                 "reason": "send_failed"
                             })
-                
+
                 except Exception as e:
                     notification_results["failures"].append({
                         "contact_id": contact.contact_id,
                         "method": method,
                         "reason": str(e)
                     })
-        
+
         return notification_results
-    
+
     def _format_emergency_message(self, incident: EmergencyIncident, urgent: bool = False) -> str:
         """Format emergency notification message."""
         urgency_prefix = "🚨 URGENT: " if urgent else "⚠️ ALERT: "
-        
+
         message = f"""{urgency_prefix}FlashMM Security Emergency
-        
+
 Incident ID: {incident.incident_id}
 Type: {incident.emergency_type.value.replace('_', ' ').title()}
 Level: {incident.emergency_level.value.upper()}
@@ -255,13 +255,13 @@ Response Actions Taken:
 
 This is an automated emergency notification from FlashMM Security System.
 """
-        
+
         return message
-    
-    async def _send_notification(self, method: str, contact: EmergencyContact, 
+
+    async def _send_notification(self, method: str, contact: EmergencyContact,
                                message: str, incident: EmergencyIncident) -> bool:
         """Send notification via specific method."""
-        
+
         if method == "email":
             return await self._send_email_notification(contact.email, message, incident)
         elif method == "sms":
@@ -270,10 +270,10 @@ This is an automated emergency notification from FlashMM Security System.
             return await self._send_slack_notification(message, incident)
         elif method == "teams":
             return await self._send_teams_notification(message, incident)
-        
+
         return False
-    
-    async def _send_email_notification(self, email: str, message: str, 
+
+    async def _send_email_notification(self, email: str, message: str,
                                      incident: EmergencyIncident) -> bool:
         """Send email notification."""
         # In production, implement actual email sending
@@ -287,8 +287,8 @@ This is an automated emergency notification from FlashMM Security System.
             }
         )
         return True
-    
-    async def _send_sms_notification(self, phone: str, message: str, 
+
+    async def _send_sms_notification(self, phone: str, message: str,
                                    incident: EmergencyIncident) -> bool:
         """Send SMS notification."""
         # In production, implement actual SMS sending
@@ -302,7 +302,7 @@ This is an automated emergency notification from FlashMM Security System.
             }
         )
         return True
-    
+
     async def _send_slack_notification(self, message: str, incident: EmergencyIncident) -> bool:
         """Send Slack notification."""
         # In production, implement actual Slack webhook
@@ -316,7 +316,7 @@ This is an automated emergency notification from FlashMM Security System.
             }
         )
         return True
-    
+
     async def _send_teams_notification(self, message: str, incident: EmergencyIncident) -> bool:
         """Send Teams notification."""
         # In production, implement actual Teams webhook
@@ -333,18 +333,18 @@ This is an automated emergency notification from FlashMM Security System.
 
 class SystemShutdownManager:
     """Manages emergency system shutdown procedures."""
-    
+
     def __init__(self):
         self.config = get_config()
-        self.shutdown_procedures: Dict[str, Callable] = {}
-        self.shutdown_order: List[str] = []
+        self.shutdown_procedures: dict[str, Callable] = {}
+        self.shutdown_order: list[str] = []
         self.graceful_shutdown_timeout = timedelta(
             seconds=self.config.get("emergency.graceful_shutdown_timeout", 300)
         )
-        
+
         # Register default shutdown procedures
         self._register_default_procedures()
-    
+
     def _register_default_procedures(self) -> None:
         """Register default shutdown procedures."""
         self.shutdown_procedures = {
@@ -356,7 +356,7 @@ class SystemShutdownManager:
             "external_connections": self._shutdown_external_connections,
             "monitoring_systems": self._shutdown_monitoring_systems
         }
-        
+
         # Define shutdown order (most critical first)
         self.shutdown_order = [
             "trading_engine",
@@ -367,15 +367,15 @@ class SystemShutdownManager:
             "database_connections",
             "monitoring_systems"
         ]
-    
-    async def emergency_shutdown(self, incident_id: str, 
+
+    async def emergency_shutdown(self, incident_id: str,
                                shutdown_reason: str,
                                initiated_by: str,
-                               force_immediate: bool = False) -> Dict[str, Any]:
+                               force_immediate: bool = False) -> dict[str, Any]:
         """Perform emergency shutdown of system components."""
-        
+
         shutdown_start = datetime.utcnow()
-        
+
         shutdown_result = {
             "shutdown_id": f"shutdown_{secrets.token_hex(8)}",
             "incident_id": incident_id,
@@ -389,7 +389,7 @@ class SystemShutdownManager:
             "failed_shutdowns": 0,
             "warnings": []
         }
-        
+
         await logger.log_critical_event(
             "emergency_shutdown_initiated",
             initiated_by,
@@ -400,48 +400,48 @@ class SystemShutdownManager:
                 "force_immediate": force_immediate
             }
         )
-        
+
         # Perform shutdown in order
         for component in self.shutdown_order:
             component_start = time.time()
-            
+
             try:
                 if component in self.shutdown_procedures:
                     shutdown_timeout = 30 if force_immediate else 180  # seconds
-                    
+
                     result = await asyncio.wait_for(
                         self.shutdown_procedures[component](force_immediate),
                         timeout=shutdown_timeout
                     )
-                    
+
                     shutdown_result["component_results"][component] = {
                         "status": "success",
                         "duration_seconds": time.time() - component_start,
                         "details": result
                     }
-                    
+
                     shutdown_result["successful_shutdowns"] += 1
-                    
+
                 else:
                     shutdown_result["component_results"][component] = {
                         "status": "skipped",
                         "reason": "no_shutdown_procedure",
                         "duration_seconds": 0
                     }
-                    
+
                     shutdown_result["warnings"].append(
                         f"No shutdown procedure defined for {component}"
                     )
-            
-            except asyncio.TimeoutError:
+
+            except TimeoutError:
                 shutdown_result["component_results"][component] = {
                     "status": "timeout",
                     "duration_seconds": time.time() - component_start,
                     "error": "Shutdown timeout exceeded"
                 }
-                
+
                 shutdown_result["failed_shutdowns"] += 1
-                
+
                 if not force_immediate:
                     # If graceful shutdown times out, attempt force shutdown
                     try:
@@ -449,32 +449,32 @@ class SystemShutdownManager:
                             self.shutdown_procedures[component](True),
                             timeout=30
                         )
-                        
+
                         shutdown_result["component_results"][component]["force_shutdown"] = {
                             "status": "success",
                             "details": force_result
                         }
-                        
+
                     except Exception as force_error:
                         shutdown_result["component_results"][component]["force_shutdown"] = {
                             "status": "failed",
                             "error": str(force_error)
                         }
-            
+
             except Exception as e:
                 shutdown_result["component_results"][component] = {
                     "status": "error",
                     "duration_seconds": time.time() - component_start,
                     "error": str(e)
                 }
-                
+
                 shutdown_result["failed_shutdowns"] += 1
-        
+
         # Calculate total shutdown time
         shutdown_duration = datetime.utcnow() - shutdown_start
         shutdown_result["total_duration_seconds"] = shutdown_duration.total_seconds()
         shutdown_result["completion_timestamp"] = datetime.utcnow().isoformat()
-        
+
         # Determine overall shutdown status
         if shutdown_result["failed_shutdowns"] == 0:
             shutdown_result["overall_status"] = "success"
@@ -482,81 +482,81 @@ class SystemShutdownManager:
             shutdown_result["overall_status"] = "partial_success"
         else:
             shutdown_result["overall_status"] = "failed"
-        
+
         await logger.log_critical_event(
             "emergency_shutdown_completed",
             initiated_by,
             shutdown_result
         )
-        
+
         return shutdown_result
-    
-    async def _shutdown_trading_engine(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_trading_engine(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown trading engine component."""
         # In production, implement actual trading engine shutdown
         await asyncio.sleep(0.1)  # Simulate shutdown time
-        
+
         return {
             "positions_closed": True,
             "orders_cancelled": True,
             "engine_stopped": True,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_market_data(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_market_data(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown market data feeds."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "feeds_disconnected": True,
             "data_streams_stopped": True,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_risk_management(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_risk_management(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown risk management systems."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "risk_monitors_stopped": True,
             "position_tracking_halted": True,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_api_services(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_api_services(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown API services."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "api_endpoints_disabled": True,
             "active_connections_closed": True,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_database_connections(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_database_connections(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown database connections."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "connections_closed": True,
             "transactions_committed": not force_immediate,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_external_connections(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_external_connections(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown external connections."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "exchange_connections_closed": True,
             "data_provider_connections_closed": True,
             "force_immediate": force_immediate
         }
-    
-    async def _shutdown_monitoring_systems(self, force_immediate: bool = False) -> Dict[str, Any]:
+
+    async def _shutdown_monitoring_systems(self, force_immediate: bool = False) -> dict[str, Any]:
         """Shutdown monitoring systems."""
         await asyncio.sleep(0.1)
-        
+
         return {
             "monitoring_stopped": True,
             "metrics_collection_halted": True,
@@ -566,15 +566,15 @@ class SystemShutdownManager:
 
 class DataProtectionManager:
     """Manages data protection and backup during emergencies."""
-    
+
     def __init__(self):
         self.config = get_config()
-        self.backup_locations: List[str] = []
-        self.critical_data_sources: List[str] = []
-        
+        self.backup_locations: list[str] = []
+        self.critical_data_sources: list[str] = []
+
         # Initialize backup configuration
         self._initialize_backup_config()
-    
+
     def _initialize_backup_config(self) -> None:
         """Initialize backup configuration."""
         self.backup_locations = self.config.get("emergency.backup_locations", [
@@ -582,7 +582,7 @@ class DataProtectionManager:
             "/backup/secondary",
             "s3://flashmm-emergency-backup"
         ])
-        
+
         self.critical_data_sources = self.config.get("emergency.critical_data", [
             "trading_positions",
             "order_history",
@@ -592,14 +592,14 @@ class DataProtectionManager:
             "audit_logs",
             "security_keys"
         ])
-    
-    async def emergency_backup(self, incident_id: str, 
+
+    async def emergency_backup(self, incident_id: str,
                              initiated_by: str,
-                             backup_scope: str = "critical") -> Dict[str, Any]:
+                             backup_scope: str = "critical") -> dict[str, Any]:
         """Perform emergency data backup."""
-        
+
         backup_start = datetime.utcnow()
-        
+
         backup_result = {
             "backup_id": f"backup_{secrets.token_hex(8)}",
             "incident_id": incident_id,
@@ -612,7 +612,7 @@ class DataProtectionManager:
             "success_count": 0,
             "failure_count": 0
         }
-        
+
         await logger.log_critical_event(
             "emergency_backup_initiated",
             initiated_by,
@@ -622,7 +622,7 @@ class DataProtectionManager:
                 "scope": backup_scope
             }
         )
-        
+
         # Determine data sources to backup
         if backup_scope == "critical":
             sources_to_backup = self.critical_data_sources
@@ -630,14 +630,14 @@ class DataProtectionManager:
             sources_to_backup = self.critical_data_sources + ["historical_data", "logs", "cache"]
         else:
             sources_to_backup = [backup_scope]  # Single specific source
-        
+
         # Backup each data source
         for source in sources_to_backup:
             source_start = time.time()
-            
+
             try:
                 backup_info = await self._backup_data_source(source, backup_result["backup_id"])
-                
+
                 backup_result["data_source_results"][source] = {
                     "status": "success",
                     "duration_seconds": time.time() - source_start,
@@ -645,27 +645,27 @@ class DataProtectionManager:
                     "location": backup_info["location"],
                     "checksum": backup_info["checksum"]
                 }
-                
+
                 backup_result["total_size_bytes"] += backup_info["size_bytes"]
                 backup_result["success_count"] += 1
-                
+
                 if backup_info["location"] not in backup_result["backup_locations"]:
                     backup_result["backup_locations"].append(backup_info["location"])
-            
+
             except Exception as e:
                 backup_result["data_source_results"][source] = {
                     "status": "failed",
                     "duration_seconds": time.time() - source_start,
                     "error": str(e)
                 }
-                
+
                 backup_result["failure_count"] += 1
-        
+
         # Calculate total backup time
         backup_duration = datetime.utcnow() - backup_start
         backup_result["total_duration_seconds"] = backup_duration.total_seconds()
         backup_result["completion_timestamp"] = datetime.utcnow().isoformat()
-        
+
         # Determine overall backup status
         if backup_result["failure_count"] == 0:
             backup_result["overall_status"] = "success"
@@ -673,36 +673,36 @@ class DataProtectionManager:
             backup_result["overall_status"] = "partial_success"
         else:
             backup_result["overall_status"] = "failed"
-        
+
         await logger.log_critical_event(
             "emergency_backup_completed",
             initiated_by,
             backup_result
         )
-        
+
         return backup_result
-    
-    async def _backup_data_source(self, source: str, backup_id: str) -> Dict[str, Any]:
+
+    async def _backup_data_source(self, source: str, backup_id: str) -> dict[str, Any]:
         """Backup a specific data source."""
         # In production, implement actual backup logic
         await asyncio.sleep(0.2)  # Simulate backup time
-        
+
         # Generate simulated backup info
         size_bytes = 1024 * 1024 * 10  # 10MB simulated
         location = f"{self.backup_locations[0]}/{backup_id}/{source}"
         checksum = hashlib.sha256(f"{source}_{backup_id}".encode()).hexdigest()
-        
+
         return {
             "size_bytes": size_bytes,
             "location": location,
             "checksum": checksum
         }
-    
-    async def verify_backup_integrity(self, backup_id: str) -> Dict[str, Any]:
+
+    async def verify_backup_integrity(self, backup_id: str) -> dict[str, Any]:
         """Verify integrity of emergency backup."""
         # In production, implement actual backup verification
         await asyncio.sleep(0.1)
-        
+
         return {
             "backup_id": backup_id,
             "verification_timestamp": datetime.utcnow().isoformat(),
@@ -715,15 +715,15 @@ class DataProtectionManager:
 
 class RecoveryManager:
     """Manages system recovery and restoration procedures."""
-    
+
     def __init__(self):
         self.config = get_config()
-        self.recovery_procedures: Dict[str, EmergencyProcedure] = {}
-        self.recovery_checkpoints: List[str] = []
-        
+        self.recovery_procedures: dict[str, EmergencyProcedure] = {}
+        self.recovery_checkpoints: list[str] = []
+
         # Initialize recovery procedures
         self._initialize_recovery_procedures()
-    
+
     def _initialize_recovery_procedures(self) -> None:
         """Initialize recovery procedures."""
         self.recovery_procedures = {
@@ -744,7 +744,7 @@ class RecoveryManager:
                 required_systems=["database", "network", "monitoring"],
                 success_criteria=["All services online", "Data integrity verified", "Trading operational"]
             ),
-            
+
             "data_recovery": EmergencyProcedure(
                 procedure_id="recovery_data",
                 name="Data Recovery Procedure",
@@ -763,7 +763,7 @@ class RecoveryManager:
                 success_criteria=["Data restored successfully", "No data corruption", "Systems operational"]
             )
         }
-        
+
         self.recovery_checkpoints = [
             "system_integrity_verified",
             "core_services_online",
@@ -772,18 +772,18 @@ class RecoveryManager:
             "trading_systems_operational",
             "full_functionality_restored"
         ]
-    
-    async def initiate_recovery(self, incident_id: str, 
+
+    async def initiate_recovery(self, incident_id: str,
                               recovery_type: str,
-                              initiated_by: str) -> Dict[str, Any]:
+                              initiated_by: str) -> dict[str, Any]:
         """Initiate system recovery procedure."""
-        
+
         if recovery_type not in self.recovery_procedures:
             raise SecurityError(f"Unknown recovery procedure: {recovery_type}")
-        
+
         procedure = self.recovery_procedures[recovery_type]
         recovery_start = datetime.utcnow()
-        
+
         recovery_result = {
             "recovery_id": f"recovery_{secrets.token_hex(8)}",
             "incident_id": incident_id,
@@ -795,7 +795,7 @@ class RecoveryManager:
             "current_step": 0,
             "status": "in_progress"
         }
-        
+
         await logger.log_critical_event(
             "recovery_procedure_initiated",
             initiated_by,
@@ -805,72 +805,72 @@ class RecoveryManager:
                 "procedure": recovery_type
             }
         )
-        
+
         # Execute recovery steps
         for step_info in procedure.steps:
             recovery_result["current_step"] = step_info["step"]
             step_start = time.time()
-            
+
             try:
                 step_result = await self._execute_recovery_step(
-                    step_info, 
+                    step_info,
                     recovery_result["recovery_id"]
                 )
-                
+
                 recovery_result["step_results"][step_info["step"]] = {
                     "status": "success",
                     "duration_seconds": time.time() - step_start,
                     "details": step_result
                 }
-                
+
                 # Check if this step completes a checkpoint
                 checkpoint = await self._check_recovery_checkpoint(step_info["step"])
                 if checkpoint:
                     recovery_result["checkpoints_completed"].append(checkpoint)
-            
+
             except Exception as e:
                 recovery_result["step_results"][step_info["step"]] = {
                     "status": "failed",
                     "duration_seconds": time.time() - step_start,
                     "error": str(e)
                 }
-                
+
                 recovery_result["status"] = "failed"
                 break
-        
+
         # Determine final status
         if recovery_result["status"] != "failed":
             if len(recovery_result["checkpoints_completed"]) >= len(self.recovery_checkpoints) * 0.8:
                 recovery_result["status"] = "success"
             else:
                 recovery_result["status"] = "partial_success"
-        
+
         recovery_duration = datetime.utcnow() - recovery_start
         recovery_result["total_duration_seconds"] = recovery_duration.total_seconds()
         recovery_result["completion_timestamp"] = datetime.utcnow().isoformat()
-        
+
         await logger.log_critical_event(
             "recovery_procedure_completed",
             initiated_by,
             recovery_result
         )
-        
+
         return recovery_result
-    
-    async def _execute_recovery_step(self, step_info: Dict[str, Any],
-                                   recovery_id: str) -> Dict[str, Any]:
+
+    async def _execute_recovery_step(self, step_info: dict[str, Any],
+                                   recovery_id: str) -> dict[str, Any]:
         """Execute a specific recovery step."""
         # In production, implement actual recovery step logic
         await asyncio.sleep(step_info.get("timeout", 60) / 100)  # Simulate step execution
-        
+
         return {
             "step": step_info["step"],
             "action": step_info["action"],
             "completed": True,
             "recovery_id": recovery_id
         }
-    
-    async def _check_recovery_checkpoint(self, step_number: int) -> Optional[str]:
+
+    async def _check_recovery_checkpoint(self, step_number: int) -> str | None:
         """Check if recovery step completes a checkpoint."""
         checkpoint_mapping = {
             1: "system_integrity_verified",
@@ -878,14 +878,14 @@ class RecoveryManager:
             3: "data_connectivity_restored",
             4: "full_functionality_restored"
         }
-        
+
         return checkpoint_mapping.get(step_number)
-    
-    async def validate_recovery_success(self, recovery_id: str) -> Dict[str, Any]:
+
+    async def validate_recovery_success(self, recovery_id: str) -> dict[str, Any]:
         """Validate that recovery was successful."""
         # In production, implement comprehensive recovery validation
         await asyncio.sleep(0.1)
-        
+
         return {
             "recovery_id": recovery_id,
             "validation_timestamp": datetime.utcnow().isoformat(),
@@ -899,21 +899,21 @@ class RecoveryManager:
 
 class EmergencyManager:
     """Main emergency management system coordinating all emergency procedures."""
-    
+
     def __init__(self):
         self.config = get_config()
-        
+
         # Initialize emergency subsystems
         self.communicator = EmergencyCommunicator()
         self.shutdown_manager = SystemShutdownManager()
         self.data_protection = DataProtectionManager()
         self.recovery_manager = RecoveryManager()
-        
+
         # Emergency state management
         self.current_system_state = SystemState.NORMAL
-        self.active_incidents: Dict[str, EmergencyIncident] = {}
-        self.emergency_history: List[EmergencyIncident] = []
-        
+        self.active_incidents: dict[str, EmergencyIncident] = {}
+        self.emergency_history: list[EmergencyIncident] = []
+
         # Emergency procedures mapping
         self.emergency_procedures = {
             EmergencyType.SECURITY_BREACH: self._handle_security_breach,
@@ -928,11 +928,11 @@ class EmergencyManager:
             EmergencyType.POWER_OUTAGE: self._handle_power_outage,
             EmergencyType.COMMUNICATION_FAILURE: self._handle_communication_failure
         }
-        
+
         # Background tasks
-        self._background_tasks: List[asyncio.Task] = []
+        self._background_tasks: list[asyncio.Task] = []
         self._shutdown_event = asyncio.Event()
-        
+
         # Emergency metrics
         self.metrics = {
             "total_incidents": 0,
@@ -942,7 +942,7 @@ class EmergencyManager:
             "failed_responses": 0,
             "system_downtime_minutes": 0
         }
-    
+
     async def initialize(self) -> None:
         """Initialize emergency management system."""
         # Start background monitoring
@@ -951,7 +951,7 @@ class EmergencyManager:
             asyncio.create_task(self._incident_status_monitor()),
             asyncio.create_task(self._emergency_metrics_collector())
         ]
-        
+
         await logger.log_critical_event(
             "emergency_manager_initialized",
             "emergency_manager",
@@ -960,34 +960,34 @@ class EmergencyManager:
                 "timestamp": datetime.utcnow().isoformat()
             }
         )
-    
+
     async def shutdown(self) -> None:
         """Shutdown emergency management system."""
         self._shutdown_event.set()
-        
+
         # Cancel background tasks
         for task in self._background_tasks:
             task.cancel()
-        
+
         await asyncio.gather(*self._background_tasks, return_exceptions=True)
-        
+
         await logger.log_critical_event(
             "emergency_manager_shutdown",
             "emergency_manager",
             {"timestamp": datetime.utcnow().isoformat()}
         )
-    
+
     async def declare_emergency(self,
                               emergency_type: EmergencyType,
                               emergency_level: EmergencyLevel,
                               description: str,
                               detected_by: str,
-                              affected_systems: List[str] = None,
-                              metadata: Dict[str, Any] = None) -> str:
+                              affected_systems: list[str] | None = None,
+                              metadata: dict[str, Any] | None = None) -> str:
         """Declare an emergency and initiate response procedures."""
-        
+
         incident_id = f"incident_{emergency_type.value}_{secrets.token_hex(8)}"
-        
+
         incident = EmergencyIncident(
             incident_id=incident_id,
             timestamp=datetime.utcnow(),
@@ -1002,13 +1002,13 @@ class EmergencyManager:
             escalation_level=self._determine_escalation_level(emergency_level),
             metadata=metadata or {}
         )
-        
+
         # Add to active incidents
         self.active_incidents[incident_id] = incident
-        
+
         # Update system state based on emergency level
         await self._update_system_state_for_emergency(emergency_level)
-        
+
         # Log emergency declaration
         await logger.log_critical_event(
             "emergency_declared",
@@ -1021,27 +1021,27 @@ class EmergencyManager:
                 "description": description
             }
         )
-        
+
         # Send emergency notifications
         notification_result = await self.communicator.send_emergency_notification(
             incident,
             escalation_level=incident.escalation_level,
             urgent=(emergency_level in [EmergencyLevel.CRITICAL, EmergencyLevel.CATASTROPHIC])
         )
-        
+
         incident.response_actions.append(f"Emergency notifications sent: {notification_result['notification_id']}")
-        
+
         # Execute emergency procedure
         await self._execute_emergency_procedure(incident)
-        
+
         # Update metrics
         self.metrics["total_incidents"] += 1
         if emergency_type.value not in self.metrics["incidents_by_type"]:
             self.metrics["incidents_by_type"][emergency_type.value] = 0
         self.metrics["incidents_by_type"][emergency_type.value] += 1
-        
+
         return incident_id
-    
+
     def _determine_escalation_level(self, emergency_level: EmergencyLevel) -> int:
         """Determine escalation level based on emergency severity."""
         escalation_mapping = {
@@ -1051,13 +1051,13 @@ class EmergencyManager:
             EmergencyLevel.CRITICAL: 4,
             EmergencyLevel.CATASTROPHIC: 5
         }
-        
+
         return escalation_mapping.get(emergency_level, 1)
-    
+
     async def _update_system_state_for_emergency(self, emergency_level: EmergencyLevel) -> None:
         """Update system state based on emergency level."""
         previous_state = self.current_system_state
-        
+
         if emergency_level == EmergencyLevel.CATASTROPHIC:
             self.current_system_state = SystemState.SHUTDOWN
         elif emergency_level == EmergencyLevel.CRITICAL:
@@ -1066,7 +1066,7 @@ class EmergencyManager:
             self.current_system_state = SystemState.EMERGENCY
         elif emergency_level == EmergencyLevel.MEDIUM:
             self.current_system_state = SystemState.DEGRADED
-        
+
         if self.current_system_state != previous_state:
             await logger.log_critical_event(
                 "system_state_changed",
@@ -1077,7 +1077,7 @@ class EmergencyManager:
                     "emergency_level": emergency_level.value
                 }
             )
-    
+
     async def _execute_emergency_procedure(self, incident: EmergencyIncident) -> None:
         """Execute appropriate emergency procedure for incident."""
         if incident.emergency_type in self.emergency_procedures:
@@ -1085,13 +1085,13 @@ class EmergencyManager:
                 procedure_result = await self.emergency_procedures[incident.emergency_type](incident)
                 incident.response_actions.extend(procedure_result.get("actions", []))
                 incident.impact_assessment = procedure_result.get("impact_assessment", {})
-                
+
                 self.metrics["successful_responses"] += 1
-                
+
             except Exception as e:
                 incident.response_actions.append(f"Emergency procedure failed: {str(e)}")
                 self.metrics["failed_responses"] += 1
-                
+
                 await logger.log_critical_event(
                     "emergency_procedure_failed",
                     "emergency_manager",
@@ -1101,11 +1101,11 @@ class EmergencyManager:
                         "error": str(e)
                     }
                 )
-    
-    async def _handle_security_breach(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_security_breach(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle security breach emergency."""
         actions = []
-        
+
         # Immediate containment
         if incident.emergency_level in [EmergencyLevel.CRITICAL, EmergencyLevel.CATASTROPHIC]:
             # Emergency shutdown
@@ -1116,7 +1116,7 @@ class EmergencyManager:
                 force_immediate=True
             )
             actions.append(f"Emergency shutdown executed: {shutdown_result['shutdown_id']}")
-        
+
         # Data protection
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1124,12 +1124,12 @@ class EmergencyManager:
             "critical"
         )
         actions.append(f"Emergency backup completed: {backup_result['backup_id']}")
-        
+
         # Network isolation (simulated)
         actions.append("Network isolation implemented")
         actions.append("Access logs secured")
         actions.append("Forensic analysis initiated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1138,11 +1138,11 @@ class EmergencyManager:
                 "estimated_downtime": "2-4 hours"
             }
         }
-    
-    async def _handle_system_compromise(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_system_compromise(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle system compromise emergency."""
         actions = []
-        
+
         # Immediate system isolation
         shutdown_result = await self.shutdown_manager.emergency_shutdown(
             incident.incident_id,
@@ -1151,7 +1151,7 @@ class EmergencyManager:
             force_immediate=(incident.emergency_level == EmergencyLevel.CATASTROPHIC)
         )
         actions.append(f"System shutdown for isolation: {shutdown_result['shutdown_id']}")
-        
+
         # Secure data
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1159,11 +1159,11 @@ class EmergencyManager:
             "full"
         )
         actions.append(f"Full system backup: {backup_result['backup_id']}")
-        
+
         actions.append("System integrity verification initiated")
         actions.append("Malware scan initiated")
         actions.append("Security keys rotated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1172,11 +1172,11 @@ class EmergencyManager:
                 "recovery_time": "4-8 hours"
             }
         }
-    
-    async def _handle_data_breach(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_data_breach(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle data breach emergency."""
         actions = []
-        
+
         # Immediate data protection
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1184,17 +1184,17 @@ class EmergencyManager:
             "critical"
         )
         actions.append(f"Critical data backup: {backup_result['backup_id']}")
-        
+
         # Assess breach scope
         actions.append("Data breach scope assessment initiated")
         actions.append("Affected data identified and catalogued")
         actions.append("Data access logs secured")
         actions.append("Regulatory notification procedures initiated")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             actions.append("Customer notification process initiated")
             actions.append("Legal team notified")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1203,21 +1203,21 @@ class EmergencyManager:
                 "regulatory_compliance": "notifications_initiated"
             }
         }
-    
-    async def _handle_trading_anomaly(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_trading_anomaly(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle trading anomaly emergency."""
         actions = []
-        
+
         # Stop trading operations
         actions.append("Trading operations suspended")
         actions.append("Position review initiated")
         actions.append("Risk analysis in progress")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             # Emergency position closure
             actions.append("Emergency position closure initiated")
             actions.append("Market makers notified")
-        
+
         # Data backup for analysis
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1225,7 +1225,7 @@ class EmergencyManager:
             "trading_positions"
         )
         actions.append(f"Trading data backup: {backup_result['backup_id']}")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1234,20 +1234,20 @@ class EmergencyManager:
                 "analysis_initiated": True
             }
         }
-    
-    async def _handle_technical_failure(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_technical_failure(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle technical failure emergency."""
         actions = []
-        
+
         # Assess failure scope
         actions.append("Technical failure assessment initiated")
         actions.append("System diagnostics running")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             # Failover procedures
             actions.append("Failover systems activated")
             actions.append("Backup systems online")
-        
+
         # Data protection
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1255,7 +1255,7 @@ class EmergencyManager:
             "critical"
         )
         actions.append(f"Data backup completed: {backup_result['backup_id']}")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1264,24 +1264,24 @@ class EmergencyManager:
                 "estimated_repair_time": "1-2 hours"
             }
         }
-    
-    async def _handle_network_attack(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_network_attack(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle network attack emergency."""
         actions = []
-        
+
         # Network protection
         actions.append("Network traffic analysis initiated")
         actions.append("Attack vectors identified")
         actions.append("IP blocking implemented")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             # Network isolation
             actions.append("Network isolation implemented")
             actions.append("External connections severed")
-        
+
         actions.append("DDoS mitigation activated")
         actions.append("Security monitoring enhanced")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1290,16 +1290,16 @@ class EmergencyManager:
                 "monitoring_enhanced": True
             }
         }
-    
-    async def _handle_regulatory_violation(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_regulatory_violation(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle regulatory violation emergency."""
         actions = []
-        
+
         # Immediate compliance measures
         actions.append("Regulatory compliance review initiated")
         actions.append("Legal team notified")
         actions.append("Violation documentation started")
-        
+
         # Data preservation
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1307,11 +1307,11 @@ class EmergencyManager:
             "full"
         )
         actions.append(f"Compliance data backup: {backup_result['backup_id']}")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             actions.append("Regulatory authorities contacted")
             actions.append("External audit initiated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1320,15 +1320,15 @@ class EmergencyManager:
                 "regulatory_response": "in_progress"
             }
         }
-    
-    async def _handle_operational_disruption(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_operational_disruption(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle operational disruption emergency."""
         return await self._handle_technical_failure(incident)
-    
-    async def _handle_natural_disaster(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_natural_disaster(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle natural disaster emergency."""
         actions = []
-        
+
         # Immediate data protection
         backup_result = await self.data_protection.emergency_backup(
             incident.incident_id,
@@ -1336,7 +1336,7 @@ class EmergencyManager:
             "full"
         )
         actions.append(f"Disaster recovery backup: {backup_result['backup_id']}")
-        
+
         # System protection
         shutdown_result = await self.shutdown_manager.emergency_shutdown(
             incident.incident_id,
@@ -1345,11 +1345,11 @@ class EmergencyManager:
             force_immediate=True
         )
         actions.append(f"Protective shutdown: {shutdown_result['shutdown_id']}")
-        
+
         actions.append("Disaster recovery site activated")
         actions.append("Personnel safety confirmed")
         actions.append("Insurance claims initiated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1358,15 +1358,15 @@ class EmergencyManager:
                 "recovery_site_active": True
             }
         }
-    
-    async def _handle_power_outage(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_power_outage(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle power outage emergency."""
         actions = []
-        
+
         # Power management
         actions.append("UPS systems activated")
         actions.append("Generator backup initiated")
-        
+
         if incident.emergency_level in [EmergencyLevel.HIGH, EmergencyLevel.CRITICAL]:
             # Graceful shutdown
             shutdown_result = await self.shutdown_manager.emergency_shutdown(
@@ -1376,10 +1376,10 @@ class EmergencyManager:
                 force_immediate=False  # Graceful shutdown
             )
             actions.append(f"Graceful shutdown: {shutdown_result['shutdown_id']}")
-        
+
         actions.append("Critical systems prioritized")
         actions.append("Power restoration coordination initiated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1388,20 +1388,20 @@ class EmergencyManager:
                 "restoration_time": "2-6 hours"
             }
         }
-    
-    async def _handle_communication_failure(self, incident: EmergencyIncident) -> Dict[str, Any]:
+
+    async def _handle_communication_failure(self, incident: EmergencyIncident) -> dict[str, Any]:
         """Handle communication failure emergency."""
         actions = []
-        
+
         # Communication recovery
         actions.append("Alternative communication channels activated")
         actions.append("Backup communication systems online")
         actions.append("Network diagnostics initiated")
-        
+
         # Stakeholder notification via alternative channels
         actions.append("Emergency contacts notified via backup channels")
         actions.append("Service status page updated")
-        
+
         return {
             "actions": actions,
             "impact_assessment": {
@@ -1410,27 +1410,27 @@ class EmergencyManager:
                 "service_continuity": "maintained"
             }
         }
-    
+
     async def resolve_incident(self, incident_id: str,
                              resolved_by: str,
                              resolution_notes: str) -> bool:
         """Resolve an active emergency incident."""
         if incident_id not in self.active_incidents:
             return False
-        
+
         incident = self.active_incidents[incident_id]
         incident.status = "resolved"
         incident.resolution_timestamp = datetime.utcnow()
         incident.lessons_learned = resolution_notes
-        
+
         # Move to history
         self.emergency_history.append(incident)
         del self.active_incidents[incident_id]
-        
+
         # Check if we can return to normal state
         if not self.active_incidents:
             await self._return_to_normal_state()
-        
+
         await logger.log_critical_event(
             "emergency_incident_resolved",
             resolved_by,
@@ -1442,15 +1442,15 @@ class EmergencyManager:
                 ).total_seconds()
             }
         )
-        
+
         return True
-    
+
     async def _return_to_normal_state(self) -> None:
         """Return system to normal state when no active incidents."""
         if self.current_system_state != SystemState.NORMAL:
             previous_state = self.current_system_state
             self.current_system_state = SystemState.NORMAL
-            
+
             await logger.log_critical_event(
                 "system_state_normalized",
                 "emergency_manager",
@@ -1459,35 +1459,35 @@ class EmergencyManager:
                     "new_state": SystemState.NORMAL.value
                 }
             )
-    
+
     async def _monitor_system_health(self) -> None:
         """Background task to monitor system health."""
         while not self._shutdown_event.is_set():
             try:
                 # System health monitoring logic would go here
                 await asyncio.sleep(60)  # Check every minute
-                
+
             except Exception as e:
                 await logger.log_critical_event(
                     "system_health_monitor_error",
                     "emergency_manager",
                     {"error": str(e)}
                 )
-    
+
     async def _incident_status_monitor(self) -> None:
         """Background task to monitor incident status."""
         while not self._shutdown_event.is_set():
             try:
                 # Check for stale incidents
                 current_time = datetime.utcnow()
-                
+
                 for incident_id, incident in list(self.active_incidents.items()):
                     # Auto-escalate incidents that are active for too long
                     incident_age = current_time - incident.timestamp
-                    
+
                     if incident_age > timedelta(hours=4) and incident.escalation_level < 4:
                         incident.escalation_level += 1
-                        
+
                         await logger.log_critical_event(
                             "incident_auto_escalated",
                             "emergency_manager",
@@ -1497,16 +1497,16 @@ class EmergencyManager:
                                 "age_hours": incident_age.total_seconds() / 3600
                             }
                         )
-                
+
                 await asyncio.sleep(300)  # Check every 5 minutes
-                
+
             except Exception as e:
                 await logger.log_critical_event(
                     "incident_monitor_error",
                     "emergency_manager",
                     {"error": str(e)}
                 )
-    
+
     async def _emergency_metrics_collector(self) -> None:
         """Background task to collect emergency metrics."""
         while not self._shutdown_event.is_set():
@@ -1515,17 +1515,17 @@ class EmergencyManager:
                 self.metrics["active_incidents"] = len(self.active_incidents)
                 self.metrics["system_state"] = self.current_system_state.value
                 self.metrics["last_updated"] = datetime.utcnow().isoformat()
-                
+
                 await asyncio.sleep(300)  # Update every 5 minutes
-                
+
             except Exception as e:
                 await logger.log_critical_event(
                     "metrics_collector_error",
                     "emergency_manager",
                     {"error": str(e)}
                 )
-    
-    def get_emergency_status(self) -> Dict[str, Any]:
+
+    def get_emergency_status(self) -> dict[str, Any]:
         """Get current emergency system status."""
         return {
             "system_state": self.current_system_state.value,
@@ -1547,8 +1547,8 @@ class EmergencyManager:
                 for incident in self.active_incidents.values()
             ]
         }
-    
-    async def test_emergency_procedures(self, test_type: str = "communication") -> Dict[str, Any]:
+
+    async def test_emergency_procedures(self, test_type: str = "communication") -> dict[str, Any]:
         """Test emergency procedures without triggering actual emergency."""
         test_results = {
             "test_id": f"test_{secrets.token_hex(8)}",
@@ -1556,10 +1556,10 @@ class EmergencyManager:
             "timestamp": datetime.utcnow().isoformat(),
             "results": {}
         }
-        
+
         if test_type == "communication":
             # Test communication systems
-            test_incident = EmergencyIncident(
+            _test_incident = EmergencyIncident(
                 incident_id="test_incident",
                 timestamp=datetime.utcnow(),
                 emergency_type=EmergencyType.TECHNICAL_FAILURE,
@@ -1573,18 +1573,18 @@ class EmergencyManager:
                 escalation_level=1,
                 metadata={"test": True}
             )
-            
+
             # Test notifications (would be limited in actual implementation)
             test_results["results"]["communication_test"] = {
                 "status": "success",
                 "channels_tested": ["email", "slack"],
                 "response_time_ms": 150
             }
-        
+
         await logger.log_critical_event(
             "emergency_procedure_test",
             "emergency_manager",
             test_results
         )
-        
+
         return test_results

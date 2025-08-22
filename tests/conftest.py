@@ -2,11 +2,11 @@
 Pytest configuration and shared fixtures for FlashMM tests.
 """
 
-import pytest
 import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
-from typing import Dict, Any
+
+import pytest
 
 # Configure test logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -172,7 +172,7 @@ def pytest_configure(config):
         "markers", "integration: mark test as integration test"
     )
     config.addinivalue_line(
-        "markers", "unit: mark test as unit test"  
+        "markers", "unit: mark test as unit test"
     )
     config.addinivalue_line(
         "markers", "performance: mark test as performance test"
@@ -188,15 +188,15 @@ def pytest_collection_modifyitems(config, items):
         # Add integration marker to integration tests
         if "integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
-        
+
         # Add unit marker to unit tests
         elif "unit" in str(item.fspath):
             item.add_marker(pytest.mark.unit)
-        
+
         # Add performance marker to performance tests
         if "performance" in item.name.lower() or "benchmark" in item.name.lower():
             item.add_marker(pytest.mark.performance)
-        
+
         # Add slow marker to tests that take longer than 5 seconds
         if "sustained" in item.name.lower() or "long" in item.name.lower():
             item.add_marker(pytest.mark.slow)

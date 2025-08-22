@@ -9,8 +9,8 @@ with ±2% inventory control.
 from .market_making_engine import (
     MarketMakingEngine,
     TradingMetrics,
+    cleanup_market_making_engine,
     get_market_making_engine,
-    cleanup_market_making_engine
 )
 
 __all__ = [

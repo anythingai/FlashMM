@@ -6,15 +6,15 @@ and ML-driven optimization to achieve ≥40% spread improvement vs baseline.
 """
 
 from .quote_optimizer import (
-    MarketCondition,
-    MarketMetrics,
-    OptimizationResult,
-    MarketConditionAnalyzer,
     CompetitionAnalyzer,
+    MarketCondition,
+    MarketConditionAnalyzer,
+    MarketMetrics,
     MLSpreadPredictor,
+    OptimizationResult,
     QuoteOptimizer,
+    cleanup_quote_optimizer,
     get_quote_optimizer,
-    cleanup_quote_optimizer
 )
 
 __all__ = [

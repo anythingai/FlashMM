@@ -4,29 +4,29 @@ FlashMM Custom Exceptions
 Defines custom exception classes for different error categories in FlashMM.
 """
 
-from typing import Optional, Dict, Any
+from typing import Any
 
 
 class FlashMMError(Exception):
     """Base exception class for FlashMM-specific errors."""
-    
+
     def __init__(
         self,
         message: str,
-        error_code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        error_code: str | None = None,
+        details: dict[str, Any] | None = None,
     ):
         super().__init__(message)
         self.message = message
         self.error_code = error_code
         self.details = details or {}
-    
+
     def __str__(self) -> str:
         if self.error_code:
             return f"[{self.error_code}] {self.message}"
         return self.message
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert exception to dictionary for JSON serialization."""
         return {
             "error_type": self.__class__.__name__,
@@ -38,11 +38,11 @@ class FlashMMError(Exception):
 
 class ConfigurationError(FlashMMError):
     """Raised when there's an error in configuration management."""
-    
+
     def __init__(
         self,
         message: str,
-        config_key: Optional[str] = None,
+        config_key: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -51,12 +51,12 @@ class ConfigurationError(FlashMMError):
 
 class TradingError(FlashMMError):
     """Base class for trading-related errors."""
-    
+
     def __init__(
         self,
         message: str,
-        symbol: Optional[str] = None,
-        order_id: Optional[str] = None,
+        symbol: str | None = None,
+        order_id: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -71,12 +71,12 @@ class OrderError(TradingError):
 
 class PositionError(TradingError):
     """Raised when there's an error with position management."""
-    
+
     def __init__(
         self,
         message: str,
-        current_position: Optional[float] = None,
-        requested_position: Optional[float] = None,
+        current_position: float | None = None,
+        requested_position: float | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -86,13 +86,13 @@ class PositionError(TradingError):
 
 class RiskError(TradingError):
     """Raised when risk limits are exceeded."""
-    
+
     def __init__(
         self,
         message: str,
-        risk_metric: Optional[str] = None,
-        current_value: Optional[float] = None,
-        limit_value: Optional[float] = None,
+        risk_metric: str | None = None,
+        current_value: float | None = None,
+        limit_value: float | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -103,11 +103,11 @@ class RiskError(TradingError):
 
 class SecurityError(FlashMMError):
     """Raised for security-related errors."""
-    
+
     def __init__(
         self,
         message: str,
-        security_event_type: Optional[str] = None,
+        security_event_type: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -116,11 +116,11 @@ class SecurityError(FlashMMError):
 
 class AuthenticationError(SecurityError):
     """Raised when authentication fails."""
-    
+
     def __init__(
         self,
         message: str,
-        user: Optional[str] = None,
+        user: str | None = None,
         **kwargs
     ):
         super().__init__(message, security_event_type="authentication_failure", **kwargs)
@@ -129,12 +129,12 @@ class AuthenticationError(SecurityError):
 
 class AuthorizationError(SecurityError):
     """Raised when authorization fails."""
-    
+
     def __init__(
         self,
         message: str,
-        user: Optional[str] = None,
-        required_permission: Optional[str] = None,
+        user: str | None = None,
+        required_permission: str | None = None,
         **kwargs
     ):
         super().__init__(message, security_event_type="authorization_failure", **kwargs)
@@ -144,13 +144,13 @@ class AuthorizationError(SecurityError):
 
 class DataValidationError(FlashMMError):
     """Raised when data validation fails."""
-    
+
     def __init__(
         self,
         message: str,
-        field_name: Optional[str] = None,
-        field_value: Optional[Any] = None,
-        validation_rule: Optional[str] = None,
+        field_name: str | None = None,
+        field_value: Any | None = None,
+        validation_rule: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -161,12 +161,12 @@ class DataValidationError(FlashMMError):
 
 class DataIngestionError(FlashMMError):
     """Raised when there's an error in data ingestion."""
-    
+
     def __init__(
         self,
         message: str,
-        source: Optional[str] = None,
-        data_type: Optional[str] = None,
+        source: str | None = None,
+        data_type: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -176,12 +176,12 @@ class DataIngestionError(FlashMMError):
 
 class WebSocketError(DataIngestionError):
     """Raised when there's a WebSocket connection error."""
-    
+
     def __init__(
         self,
         message: str,
-        url: Optional[str] = None,
-        reconnect_attempts: Optional[int] = None,
+        url: str | None = None,
+        reconnect_attempts: int | None = None,
         **kwargs
     ):
         super().__init__(message, source="websocket", **kwargs)
@@ -191,12 +191,12 @@ class WebSocketError(DataIngestionError):
 
 class ModelError(FlashMMError):
     """Raised when there's an error with ML models."""
-    
+
     def __init__(
         self,
         message: str,
-        model_name: Optional[str] = None,
-        model_version: Optional[str] = None,
+        model_name: str | None = None,
+        model_version: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -206,11 +206,11 @@ class ModelError(FlashMMError):
 
 class InferenceError(ModelError):
     """Raised when model inference fails."""
-    
+
     def __init__(
         self,
         message: str,
-        input_shape: Optional[tuple] = None,
+        input_shape: tuple | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -219,13 +219,13 @@ class InferenceError(ModelError):
 
 class ExternalAPIError(FlashMMError):
     """Raised when external API calls fail."""
-    
+
     def __init__(
         self,
         message: str,
-        api_name: Optional[str] = None,
-        status_code: Optional[int] = None,
-        response_data: Optional[Dict[str, Any]] = None,
+        api_name: str | None = None,
+        status_code: int | None = None,
+        response_data: dict[str, Any] | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -236,26 +236,26 @@ class ExternalAPIError(FlashMMError):
 
 class CambrianAPIError(ExternalAPIError):
     """Raised when Cambrian SDK API calls fail."""
-    
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, api_name="cambrian", **kwargs)
 
 
 class SeiRPCError(ExternalAPIError):
     """Raised when Sei RPC calls fail."""
-    
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, api_name="sei_rpc", **kwargs)
 
 
 class StorageError(FlashMMError):
     """Raised when storage operations fail."""
-    
+
     def __init__(
         self,
         message: str,
-        storage_type: Optional[str] = None,
-        operation: Optional[str] = None,
+        storage_type: str | None = None,
+        operation: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -265,26 +265,26 @@ class StorageError(FlashMMError):
 
 class RedisError(StorageError):
     """Raised when Redis operations fail."""
-    
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, storage_type="redis", **kwargs)
 
 
 class InfluxDBError(StorageError):
     """Raised when InfluxDB operations fail."""
-    
+
     def __init__(self, message: str, **kwargs):
         super().__init__(message, storage_type="influxdb", **kwargs)
 
 
 class CircuitBreakerError(FlashMMError):
     """Raised when circuit breaker is triggered."""
-    
+
     def __init__(
         self,
         message: str,
-        breaker_name: Optional[str] = None,
-        trigger_reason: Optional[str] = None,
+        breaker_name: str | None = None,
+        trigger_reason: str | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -294,13 +294,13 @@ class CircuitBreakerError(FlashMMError):
 
 class RateLimitError(FlashMMError):
     """Raised when rate limits are exceeded."""
-    
+
     def __init__(
         self,
         message: str,
-        limit_type: Optional[str] = None,
-        current_rate: Optional[float] = None,
-        limit_rate: Optional[float] = None,
+        limit_type: str | None = None,
+        current_rate: float | None = None,
+        limit_rate: float | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
@@ -311,14 +311,83 @@ class RateLimitError(FlashMMError):
 
 class TimeoutError(FlashMMError):
     """Raised when operations timeout."""
-    
+
     def __init__(
         self,
         message: str,
-        operation: Optional[str] = None,
-        timeout_seconds: Optional[float] = None,
+        operation: str | None = None,
+        timeout_seconds: float | None = None,
         **kwargs
     ):
         super().__init__(message, **kwargs)
         self.operation = operation
         self.timeout_seconds = timeout_seconds
+
+
+class BlockchainError(FlashMMError):
+    """Raised when blockchain operations fail."""
+
+    def __init__(
+        self,
+        message: str,
+        chain_id: str | None = None,
+        transaction_hash: str | None = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.chain_id = chain_id
+        self.transaction_hash = transaction_hash
+
+
+class ServiceError(FlashMMError):
+    """Raised when service operations fail."""
+
+    def __init__(
+        self,
+        message: str,
+        service_name: str | None = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.service_name = service_name
+
+
+class ValidationError(FlashMMError):
+    """Raised when validation fails."""
+
+    def __init__(
+        self,
+        message: str,
+        field_name: str | None = None,
+        validation_rule: str | None = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.field_name = field_name
+        self.validation_rule = validation_rule
+
+
+class OperationalError(FlashMMError):
+    """Raised when operational issues occur."""
+
+    def __init__(
+        self,
+        message: str,
+        operation: str | None = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.operation = operation
+
+
+class EmergencyStopError(FlashMMError):
+    """Raised when emergency stop is triggered."""
+
+    def __init__(
+        self,
+        message: str,
+        reason: str | None = None,
+        **kwargs
+    ):
+        super().__init__(message, **kwargs)
+        self.reason = reason
